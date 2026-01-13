@@ -374,6 +374,7 @@ void Model_Data::read_forc_csv(const char *fn){
     str[0] = '\0';
     fgets(str, MAXLEN, fp); // Dimension of the table
     sscanf(str, "%d %ld", &NumForc, &ForcStartTime);
+    Time.setBaseDate(ForcStartTime);
     tsd_weather = new _TimeSeriesData[NumForc];
     for(int i=0; i < NumForc; i++){
         tsd_weather[i].initialize(Nforc + 1); /* Nforc= number of forcing variables. */
@@ -646,4 +647,3 @@ void Model_Data::FreeData(){
     /* MD::initialize() */
     delete flood;
 }
-

@@ -18,6 +18,7 @@
 #include "Lake.hpp"
 #include "is_sm_et.hpp"
 #include "Flux_RiverElement.hpp"
+#include "TimeContext.hpp"
 #include "Macros.hpp"
 #include "AccTemperature.hpp"
 using namespace std;
@@ -187,6 +188,7 @@ public:
     RiverSegement *RivSeg;
     
     long ForcStartTime;
+    TimeContext Time;
     
 private:
     double *t_prcp;
@@ -336,4 +338,3 @@ private:
     double updateArea();
 };
 #endif                /* Model_Data_hpp */
-
