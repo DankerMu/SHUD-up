@@ -464,7 +464,80 @@ void Model_Data::loadinput(){
         if(flag) fprintf(stdout,"%d \t Reading file: %s\n", nt++,pf_in->file_rbc2);
         read_bcLake2(pf_in->file_lbc2);
     }
+    validateTimeStamps();
     this->CS.num_threads = max(CS.num_threads,  pf_in->numthreads); /* Number of threads for OpenMP */
+}
+
+void Model_Data::validateTimeStamps()
+{
+    const long expected = ForcStartTime;
+
+    if (expected <= 0) {
+        fprintf(stderr, "\n  Fatal Error: Invalid ForcStartTime = %ld\n", expected);
+        fprintf(stderr, "  Fix: check the first line of forcing config file: %s\n", pf_in->file_forc);
+        myexit(ERRDATAIN);
+    }
+
+    // 1) forcing: station file start_yyyymmdd == ForcStartTime
+    for (int i = 0; i < NumForc; i++) {
+        const std::string &filename = tsd_weather[i].fn;
+        FILE *fp = fopen(filename.c_str(), "r");
+        CheckFile(fp, filename.c_str());
+
+        char line[MAXLEN];
+        if (fgets(line, MAXLEN, fp) == NULL) {
+            fclose(fp);
+            fprintf(stderr, "\n  Fatal Error: Failed to read forcing header line.\n");
+            fprintf(stderr, "  File: %s\n", filename.c_str());
+            fprintf(stderr, "  Fix: ensure the forcing csv has a valid first line with start_yyyymmdd.\n");
+            myexit(ERRFileIO);
+        }
+        fclose(fp);
+
+        int nrow = 0;
+        int ncol = 0;
+        long start_yyyymmdd = 0;
+        long end_yyyymmdd = 0;
+        const int nread = sscanf(line, "%d %d %ld %ld", &nrow, &ncol, &start_yyyymmdd, &end_yyyymmdd);
+        if (nread < 3) {
+            fprintf(stderr, "\n  Fatal Error: Invalid forcing header format (expect: nrow ncol start_yyyymmdd [end_yyyymmdd]).\n");
+            fprintf(stderr, "  File: %s\n", filename.c_str());
+            fprintf(stderr, "  Header: %s\n", line);
+            fprintf(stderr, "  Fix: make sure the 3rd value is start_yyyymmdd, e.g. \"87667 6 20000101 20100101\".\n");
+            myexit(ERRDATAIN);
+        }
+        if (start_yyyymmdd != expected) {
+            fprintf(stderr, "\n  Fatal Error: Forcing start_yyyymmdd does not match ForcStartTime.\n");
+            fprintf(stderr, "  File: %s\n", filename.c_str());
+            fprintf(stderr, "  Expected start_yyyymmdd (ForcStartTime from %s): %ld\n", pf_in->file_forc, expected);
+            fprintf(stderr, "  Actual start_yyyymmdd: %ld\n", start_yyyymmdd);
+            fprintf(stderr, "  Fix: set the 3rd value in the first line of this forcing csv to %ld,\n", expected);
+            fprintf(stderr, "       or update ForcStartTime in %s to %ld to match the forcing csv.\n", pf_in->file_forc, start_yyyymmdd);
+            myexit(ERRDATAIN);
+        }
+    }
+
+    // 2) enabled TSD: StartTime == ForcStartTime
+    const auto validateTsdStartTime = [&](const _TimeSeriesData &tsd, const char *tag) {
+        const long actual = tsd.getStartTime();
+        if (actual != expected) {
+            fprintf(stderr, "\n  Fatal Error: %s StartTime does not match ForcStartTime.\n", tag);
+            fprintf(stderr, "  File: %s\n", tsd.fn.c_str());
+            fprintf(stderr, "  Expected StartTime (ForcStartTime): %ld\n", expected);
+            fprintf(stderr, "  Actual StartTime: %ld\n", actual);
+            fprintf(stderr, "  Fix: set the 3rd value in the first line of %s to %ld.\n", tsd.fn.c_str(), expected);
+            myexit(ERRDATAIN);
+        }
+    };
+
+    validateTsdStartTime(tsd_LAI, "LAI");
+    validateTsdStartTime(tsd_MF, "MF");
+    if (ieBC1) validateTsdStartTime(tsd_eyBC, "EleBC-Y");
+    if (ieBC2) validateTsdStartTime(tsd_eqBC, "EleBC-Q");
+    if (irBC1) validateTsdStartTime(tsd_ryBC, "RivBC-Y");
+    if (irBC2) validateTsdStartTime(tsd_rqBC, "RivBC-Q");
+    if (ilBC1) validateTsdStartTime(tsd_lyBC, "LakeBC-Y");
+    if (ilBC2) validateTsdStartTime(tsd_lqBC, "LakeBC-Q");
 }
 //void Model_Data::read_rl(const char *fn){
 //    tsd_RL.fn = fn;

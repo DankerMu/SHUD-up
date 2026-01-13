@@ -106,6 +106,10 @@ double _TimeSeriesData::getX(double t, int col)
 int _TimeSeriesData::get_Ncol(){
     return ncol;
 }
+long _TimeSeriesData::getStartTime() const
+{
+    return StartTime;
+}
 void _TimeSeriesData::applyCalib(double prcp, double temp)
 {
     for (int i = 0; i < Length; i++) {
@@ -142,4 +146,3 @@ void _TimeSeriesData::checkValue(int icol, double xmin, double xmax, const char 
         }
     }
 }
-
