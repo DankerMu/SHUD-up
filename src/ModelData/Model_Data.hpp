@@ -246,6 +246,7 @@ public:
     
 //    void updateWF(double dt);
     void CheckInputData();
+    void validateTimeStamps();
     void InitFloodAlert(const char *fn);
     void updateRiverStage(N_Vector uY);
     void debugData();

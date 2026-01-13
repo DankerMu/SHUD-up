@@ -28,6 +28,7 @@ public:
     void    initialize(int n);
     void    checkValue(int icol, double xmin, double xmax, const char *varname);
     int     get_Ncol();
+    long    getStartTime() const;
     double  xyz[3]={NA_VALUE, NA_VALUE, NA_VALUE};
 private:
     long StartTime;
@@ -45,5 +46,4 @@ private:
 
 void CheckFile(std::ifstream * fp, const char *s);
 #endif                /* TimeSeriesData_hpp */
-
 
