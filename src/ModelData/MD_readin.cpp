@@ -865,6 +865,8 @@ void Model_Data::FreeData(){
     delete[]    t_vp;
     delete[]    t_lai;
     delete[]    t_mf;
+    delete[]    tsr_factor;
+    delete[]    tsr_factor_bucket;
 //    delete[]    t_hc;
     
     //read_rivseg()
