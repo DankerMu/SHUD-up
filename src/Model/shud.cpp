@@ -89,6 +89,7 @@ double SHUD(FileIn *fin, FileOut *fout){
         /* inner loops to next output points with ET step size control */
         tnext += MD->CS.SolverStep;
         while (t < tnext) {
+            MD->updateAllTimeSeries(t);
             MD->updateforcing(t);
             /* calculate Interception Storage */
             MD->ET(t, tnext);
@@ -206,6 +207,7 @@ double SHUD_uncouple(FileIn *fin, FileOut *fout){
 //                tout = t + MD->CS.ETStep;
 //            }
             dt = tout - t;
+            MD->updateAllTimeSeries(t);
             MD->updateforcing(t);
 //            if(t >= tnext_et){
                 /* calculate Interception Storage */
@@ -301,4 +303,3 @@ int SHUD(int argc, char *argv[]){
     delete fout;
     return 0;
 }
-

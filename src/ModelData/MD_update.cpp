@@ -1,5 +1,44 @@
 #include "Model_Data.hpp"
 
+void Model_Data::updateAllTimeSeries(double t_min)
+{
+    if (NumForc > 0 && tsd_weather != nullptr) {
+        for (int i = 0; i < NumForc; i++) {
+            tsd_weather[i].movePointer(t_min);
+        }
+    }
+
+    if (NumLC > 0) {
+        tsd_LAI.movePointer(t_min);
+    }
+    if (NumMeltF > 0) {
+        tsd_MF.movePointer(t_min);
+    }
+
+    if (ieSS && NumSSEle > 0) {
+        tsd_eleSS.movePointer(t_min);
+    }
+
+    if (ieBC1 && NumBCEle1 > 0) {
+        tsd_eyBC.movePointer(t_min);
+    }
+    if (ieBC2 && NumBCEle2 > 0) {
+        tsd_eqBC.movePointer(t_min);
+    }
+    if (irBC1 && NumBCRiv1 > 0) {
+        tsd_ryBC.movePointer(t_min);
+    }
+    if (irBC2 && NumBCRiv2 > 0) {
+        tsd_rqBC.movePointer(t_min);
+    }
+    if (ilBC1 && NumBCLake1 > 0) {
+        tsd_lyBC.movePointer(t_min);
+    }
+    if (ilBC2 && NumBCLake2 > 0) {
+        tsd_lqBC.movePointer(t_min);
+    }
+}
+
 void Model_Data::f_updatei(double  *Y, double *DY, double t, int flag){
     switch (flag) {
         case 1:
