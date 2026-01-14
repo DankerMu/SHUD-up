@@ -29,21 +29,27 @@ public:
     void    checkValue(int icol, double xmin, double xmax, const char *varname);
     int     get_Ncol();
     long    getStartTime() const;
+    double  getMinTime() const;
+    double  getMaxTime() const;
     double  xyz[3]={NA_VALUE, NA_VALUE, NA_VALUE};
 private:
     long StartTime;
+    mutable int timeRangeCached = 0;
+    mutable double minTime = NA_VALUE;
+    mutable double maxTime = NA_VALUE;
     int ncol = 0;
     int Length;
     int eof;
     int iNow, iNext;
     int nQue = 0;
+    int linesConsumed = 0;
     double *ts[MAXQUE + 1];
     int pRing[MAXQUE + 1];
     
     //    void    buildfn(std::string fforc);
     double  interpolation(double t);
+    void    computeTimeRange() const;
 };
 
 void CheckFile(std::ifstream * fp, const char *s);
 #endif                /* TimeSeriesData_hpp */
-
