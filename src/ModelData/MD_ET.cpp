@@ -26,7 +26,13 @@ void Model_Data::tReadForcing(double t, int i){
     t_mf[i] = tsd_MF.getX(t, Ele[i].iMF) * gc.cMF / 1440.;  /*  [m/day/C] to [m/min/C].
                                                             1.6 ~ 6.0 mm/day/C is typical value in USDA book
                                                             Input is 1.4 ~ 3.0 mm/d/c */
-    t_rn[i] = tsd_weather[idx].getX(t, i_rn) * (1 - Ele[i].Albedo);
+    if (CS.radiation_input_mode == SWNET) {
+        // SWNET mode: forcing 第6列已是净短波，不再乘 (1-Albedo)
+        t_rn[i] = tsd_weather[idx].getX(t, i_rn);
+    } else {
+        // SWDOWN mode (default): forcing 第6列是下行短波，需乘 (1-Albedo) 净化
+        t_rn[i] = tsd_weather[idx].getX(t, i_rn) * (1 - Ele[i].Albedo);
+    }
     Uz = t_wind[i] = (fabs(tsd_weather[idx].getX(t, i_wind) ) + 0.001); // +.001 voids ZERO.
     t_rh[i] = tsd_weather[idx].getX(t, i_rh);
 //    t_hc[i] = tsd_RL.getX(t, Ele[i].iLC);
