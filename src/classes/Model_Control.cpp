@@ -142,12 +142,33 @@ void Control_Data::read(const char *fn){
         else if (strcasecmp ("ET_Mode", optstr) == 0)
             ET_Mode =  val;
         else if (strcasecmp("RADIATION_INPUT_MODE", optstr) == 0) {
+            const int default_mode = SWDOWN;
             char mode_str[MAXLEN] = "";
-            if (sscanf(str, "%s %s", optstr, mode_str) == 2 &&
-                strcasecmp("SWNET", mode_str) == 0) {
+            radiation_input_mode = default_mode;
+            if (sscanf(str, "%s %s", optstr, mode_str) != 2) {
+                fprintf(stderr,
+                        "WARNING: RADIATION_INPUT_MODE missing value in %s; using default %s (%d).\n",
+                        fn,
+                        default_mode == SWNET ? "SWNET" : "SWDOWN",
+                        default_mode);
+            } else if (strcasecmp(mode_str, "SWDOWN") == 0) {
+                radiation_input_mode = SWDOWN;
+            } else if (strcasecmp(mode_str, "SWNET") == 0) {
                 radiation_input_mode = SWNET;
             } else {
-                radiation_input_mode = SWDOWN;  // default
+                char *endptr = NULL;
+                const double mode_val = strtod(mode_str, &endptr);
+                if (endptr != NULL && *endptr == '\0' && (mode_val == 0.0 || mode_val == 1.0)) {
+                    radiation_input_mode = (mode_val == 1.0) ? SWNET : SWDOWN;
+                } else {
+                    fprintf(stderr,
+                            "WARNING: invalid RADIATION_INPUT_MODE value '%s' in %s; using default %s (%d). "
+                            "Valid values: SWDOWN/SWNET or 0/1.\n",
+                            mode_str,
+                            fn,
+                            default_mode == SWNET ? "SWNET" : "SWDOWN",
+                            default_mode);
+                }
             }
         }
         else if (strcasecmp ("ET_STEP", optstr) == 0 || strcasecmp ("LSM_STEP", optstr) == 0)
@@ -278,6 +299,7 @@ void Print_Ctrl::open_file(int a, int b, int radiation_input_mode){
     if (Ascii){
         fid_asc = fopen (filea, "w");
         CheckFile(fid_asc, filea);
+        fprintf(fid_asc, "# Timestamp semantics: left endpoint (t-Interval)\n");
         fprintf(fid_asc, "%d\t %d\t %ld\n", 0, NumVar, StartTime);
         fprintf(fid_asc, "# Radiation input mode: %s\n",
                 radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
