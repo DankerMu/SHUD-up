@@ -369,39 +369,97 @@ void Model_Data::read_forc_csv(const char *fn){
     char shortname[MAXLEN];
     char longname[MAXLEN];
     int id;
-    double lon, lat;
+    double lon = NA_VALUE;
+    double lat = NA_VALUE;
     path[0] = '\0';
     str[0] = '\0';
-    fgets(str, MAXLEN, fp); // Dimension of the table
-    sscanf(str, "%d %ld", &NumForc, &ForcStartTime);
+    int line_no = 0;
+    if (fgets(str, MAXLEN, fp) == NULL) { // Dimension of the table
+        fprintf(stderr, "\n  Fatal Error: forcing list file is empty: %s\n", fn);
+        myexit(ERRFileIO);
+    }
+    line_no++;
+    int nread = sscanf(str, "%d %ld", &NumForc, &ForcStartTime);
+    if (nread != 2) {
+        fprintf(stderr, "\n  Fatal Error: invalid forcing list header in %s at line %d\n", fn, line_no);
+        fprintf(stderr, "  Expected: <NumForc> <ForcStartTime>\n");
+        fprintf(stderr, "  Got: %s", str);
+        myexit(ERRFileIO);
+    }
+    if (NumForc <= 0) {
+        fprintf(stderr, "\n  Fatal Error: NumForc must be > 0 in %s (got %d)\n", fn, NumForc);
+        myexit(ERRDATAIN);
+    }
     Time.setBaseDate(ForcStartTime);
     tsd_weather = new _TimeSeriesData[NumForc];
     for(int i=0; i < NumForc; i++){
         tsd_weather[i].initialize(Nforc + 1); /* Nforc= number of forcing variables. */
     }
-    fgets(str, MAXLEN, fp);
-    if( strlen(str) > 1){
-        sscanf(str, "%s", path);
+    if (fgets(str, MAXLEN, fp) == NULL) {
+        fprintf(stderr, "\n  Fatal Error: forcing list file missing path line: %s\n", fn);
+        myexit(ERRFileIO);
     }
-    fgets(str, MAXLEN, fp);
+    line_no++;
+    if( strlen(str) > 1){
+        if (sscanf(str, "%s", path) != 1) {
+            fprintf(stderr, "\n  Fatal Error: invalid forcing path line in %s at line %d\n", fn, line_no);
+            fprintf(stderr, "  Got: %s", str);
+            myexit(ERRFileIO);
+        }
+    }
+    if (fgets(str, MAXLEN, fp) == NULL) {
+        fprintf(stderr, "\n  Fatal Error: forcing list file missing header line: %s\n", fn);
+        myexit(ERRFileIO);
+    }
+    line_no++;
 #ifdef DEBUG
     printf("%s", str);
 #endif
-    for(int i=0; i < NumForc && fgets(str, MAXLEN, fp); i++)
-    {
-        sscanf(str, "%d %lf %lf %lf %lf %lf %s", &id, &lon, &lat, tsd_weather[i].xyz, tsd_weather[i].xyz+1, tsd_weather[i].xyz+2, shortname);
+    for (int i = 0; i < NumForc; ) {
+        if (fgets(str, MAXLEN, fp) == NULL) {
+            fprintf(stderr, "\n  Fatal Error: forcing list file %s ended early (expected %d records, got %d)\n",
+                    fn, NumForc, i);
+            myexit(ERRFileIO);
+        }
+        line_no++;
+
+        const char *p = str;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+            p++;
+        }
+        if (*p == '\0' || *p == '#') {
+            continue;
+        }
+
+        nread = sscanf(str, "%d %lf %lf %lf %lf %lf %s",
+                       &id, &lon, &lat,
+                       tsd_weather[i].xyz, tsd_weather[i].xyz+1, tsd_weather[i].xyz+2,
+                       shortname);
+        if (nread != 7) {
+            fprintf(stderr, "\n  Fatal Error: invalid forcing record in %s at line %d\n", fn, line_no);
+            fprintf(stderr, "  Expected: ID Lon Lat X Y Z Filename (7 columns)\n");
+            fprintf(stderr, "  Got: %s", str);
+            myexit(ERRFileIO);
+        }
+
         tsd_weather[i].lon_deg = lon;
         tsd_weather[i].lat_deg = lat;
-        sprintf(longname, "%s/%s", path, shortname);
+        if (strlen(path) > 0) {
+            snprintf(longname, sizeof(longname), "%s/%s", path, shortname);
+        } else {
+            snprintf(longname, sizeof(longname), "%s", shortname);
+        }
 #ifdef DEBUG
         printf("debug:%d %d, %lf, %lf, %lf, %lf, %lf, %s\n", i+1, id, lon, lat,
                tsd_weather[i].xyz[0], tsd_weather[i].xyz[1], tsd_weather[i].xyz[2], longname);
 #endif
         tsd_weather[i].fn.assign(longname);
+        i++;
     }
     fclose(fp);
 
-    /* Global solar lon/lat selection (v1) */
+    /* Global solar lon/lat selection (v1)
+       Note: currently recorded/exported for traceability only; not used in solar/radiation calculations. */
     CS.solar_lon_deg = NA_VALUE;
     CS.solar_lat_deg = NA_VALUE;
     if (CS.solar_lonlat_mode == FIXED) {
@@ -422,6 +480,9 @@ void Model_Data::read_forc_csv(const char *fn){
             if (lo == NA_VALUE || la == NA_VALUE) {
                 continue;
             }
+            if (lo < -180.0 || lo > 180.0 || la < -90.0 || la > 90.0) {
+                continue;
+            }
             sum_lon += lo;
             sum_lat += la;
             n++;
@@ -429,15 +490,41 @@ void Model_Data::read_forc_csv(const char *fn){
         if (n > 0) {
             CS.solar_lon_deg = sum_lon / n;
             CS.solar_lat_deg = sum_lat / n;
-        } else if (NumForc > 0) {
-            CS.solar_lon_deg = tsd_weather[0].lon();
-            CS.solar_lat_deg = tsd_weather[0].lat();
         }
     } else { /* FORCING_FIRST (default) */
-        if (NumForc > 0) {
-            CS.solar_lon_deg = tsd_weather[0].lon();
-            CS.solar_lat_deg = tsd_weather[0].lat();
+        CS.solar_lon_deg = tsd_weather[0].lon();
+        CS.solar_lat_deg = tsd_weather[0].lat();
+    }
+
+    if (CS.solar_lon_deg == NA_VALUE || CS.solar_lat_deg == NA_VALUE) {
+        if (CS.solar_lonlat_mode == FORCING_MEAN) {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=FORCING_MEAN but no valid Lon/Lat found in %s\n", fn);
+            fprintf(stderr, "  Requirements: lon in [-180, 180], lat in [-90, 90], and not NA_VALUE (%d)\n", NA_VALUE);
+            fprintf(stderr, "  Fix: provide valid Lon/Lat in %s, or set SOLAR_LONLAT_MODE=FIXED with SOLAR_LON_DEG/SOLAR_LAT_DEG in %s\n",
+                    fn, pf_in->file_para);
+        } else if (CS.solar_lonlat_mode == FORCING_FIRST) {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=FORCING_FIRST selected Lon/Lat is missing (lon=%.6f, lat=%.6f)\n",
+                    CS.solar_lon_deg, CS.solar_lat_deg);
+            fprintf(stderr, "  Fix: provide valid Lon/Lat in the first record of %s, or set SOLAR_LONLAT_MODE=FORCING_MEAN/FIXED in %s\n",
+                    fn, pf_in->file_para);
+        } else {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=%s selected Lon/Lat is missing (lon=%.6f, lat=%.6f)\n",
+                    SolarLonLatModeName(CS.solar_lonlat_mode), CS.solar_lon_deg, CS.solar_lat_deg);
         }
+        myexit(ERRDATAIN);
+    }
+    if (CS.solar_lon_deg < -180.0 || CS.solar_lon_deg > 180.0 || CS.solar_lat_deg < -90.0 || CS.solar_lat_deg > 90.0) {
+        fprintf(stderr, "\n  Fatal Error: invalid solar Lon/Lat selected (mode=%s, lon=%.6f, lat=%.6f)\n",
+                SolarLonLatModeName(CS.solar_lonlat_mode),
+                CS.solar_lon_deg,
+                CS.solar_lat_deg);
+        fprintf(stderr, "  Requirements: lon in [-180, 180], lat in [-90, 90]\n");
+        if (CS.solar_lonlat_mode == FIXED) {
+            fprintf(stderr, "  Fix: update SOLAR_LON_DEG/SOLAR_LAT_DEG in %s\n", pf_in->file_para);
+        } else {
+            fprintf(stderr, "  Fix: check Lon/Lat columns in %s, or set SOLAR_LONLAT_MODE=FIXED in %s\n", fn, pf_in->file_para);
+        }
+        myexit(ERRDATAIN);
     }
 
     printf("\tSolar lon/lat: mode=%s, lon=%.6f, lat=%.6f\n",
