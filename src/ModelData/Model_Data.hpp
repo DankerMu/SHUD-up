@@ -253,6 +253,7 @@ public:
     void debugData(const char *fn);
     void f_etFlux(int i, double t);
     void ET(double t, double tnext);
+    void updateAllTimeSeries(double t_min);
     void updateforcing(double t);
     double getArea();
     void PassValue();

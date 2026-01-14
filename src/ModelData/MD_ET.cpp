@@ -9,15 +9,6 @@
 #include "Model_Data.hpp"
 void Model_Data::updateforcing(double t){
     int i;
-#ifdef _OPENMP_ON
-#pragma omp for
-#endif
-    for (i = 0; i < NumForc; i++){
-        tsd_weather[i].movePointer(t);
-    }
-    tsd_MF.movePointer(t);
-    tsd_LAI.movePointer(t);
-//    tsd_RL.movePointer(t);
     for(i = 0; i < NumEle; i++){
         Ele[i].updateElement(uYsf[i], uYus[i], uYgw[i]);
         tReadForcing(t,i);
@@ -226,4 +217,3 @@ void Model_Data::f_etFlux(int i, double t){
 #ifdef DEBUG
 #endif
 }
-
