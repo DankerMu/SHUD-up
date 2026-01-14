@@ -228,6 +228,7 @@ void Control_Data::read(const char *fn){
     SolverStep = MaxStep; // Improve it in future for overcasting.
     fclose (fp);
     updateSimPeriod();
+    fprintf(stdout, "* \t ET_STEP/LSM_STEP: %.2f min\n", ETStep);
 }
 void Control_Data::write(const char *fn){
     
@@ -264,6 +265,7 @@ void Print_Ctrl::open_file(int a, int b){
     if (Ascii){
         fid_asc = fopen (filea, "w");
         CheckFile(fid_asc, filea);
+        fprintf(fid_asc, "# Timestamp semantics: left endpoint (t-Interval)\n");
         fprintf(fid_asc, "%d\t %d\t %ld\n", 0, NumVar, StartTime);
         fprintf(fid_asc, "%s", "Time_min");
         for(int i = 0; i < NumVar; i++){
@@ -436,13 +438,16 @@ void Print_Ctrl::close_file(){
     
 }
 void Print_Ctrl::PrintData(double dt, double t){
-    long    t_long;
+    long long t_floor;
     NumUpdate++; /* Number of times to push data into the buffer*/
     for (int i = 0; i < NumVar; i++){
         buffer[i] += *(PrintVar[i]);
     }
-    t_long = (long int)t;
-    if ((t_long % Interval) == 0){
+    /* Use floor with small epsilon for numerical stability at boundaries.
+       This prevents missing output points due to floating-point errors
+       (e.g., 59.9999999 -> 60) while avoiding early triggers (unlike llround). */
+    t_floor = static_cast<long long>(floor(t + 0.001));
+    if ((t_floor % Interval) == 0){
         for (int i = 0; i < NumVar; i++){
             buffer[i] *= tau / NumUpdate ; /* Get the mean in the time-interval*/
         }

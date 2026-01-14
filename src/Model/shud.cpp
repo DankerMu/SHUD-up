@@ -79,6 +79,8 @@ double SHUD(FileIn *fin, FileOut *fout){
     MD->debugData(fout->outpath);
     MD->gc.write(fout->Calib_bak);
 //    f(t, udata, du, MD); /* Initialized the status */
+    const bool etSubstepEnabled =
+        (MD->CS.ETStep > ZERO && MD->CS.ETStep + ZERO < MD->CS.SolverStep);
     for (int i = 0; i < MD->CS.NumSteps && !ierr; i++) {
         printDY(MD->file_debug);
 #ifdef DEBUG
@@ -90,7 +92,7 @@ double SHUD(FileIn *fin, FileOut *fout){
         tnext += MD->CS.SolverStep;
         while (t + ZERO < tnext) {
             double tout = tnext;
-            if (MD->CS.ETStep > ZERO && MD->CS.ETStep + ZERO < MD->CS.SolverStep) {
+            if (etSubstepEnabled) {
                 tout = min(t + MD->CS.ETStep, tnext);
             }
 
@@ -101,6 +103,10 @@ double SHUD(FileIn *fin, FileOut *fout){
             if (dummy_mode) {
                 t = tout; /* dummy mode only. */
             } else {
+                if (etSubstepEnabled) {
+                    flag = CVodeSetStopTime(mem, tout);
+                    check_flag(&flag, "CVodeSetStopTime", 1);
+                }
                 flag = CVode(mem, tout, udata, &t, CV_NORMAL);
                 check_flag(&flag, "CVode", 1);
             }
@@ -202,12 +208,14 @@ double SHUD_uncouple(FileIn *fin, FileOut *fout){
 //    fp3=fopen("y3.txt", "w");
 //    fp4=fopen("y4.txt", "w");
     double t0 = t;
+    const bool etSubstepEnabled =
+        (MD->CS.ETStep > ZERO && MD->CS.ETStep + ZERO < MD->CS.SolverStep);
     for (int i = 0; i < MD->CS.NumSteps && !ierr; i++) {
         /* inner loops to next output points with ET step size control */
         tnext += MD->CS.SolverStep;
         while (t + ZERO < tnext) {
             tout = tnext;
-            if (MD->CS.ETStep > ZERO && MD->CS.ETStep + ZERO < MD->CS.SolverStep) {
+            if (etSubstepEnabled) {
                 tout = min(t + MD->CS.ETStep, tnext);
             }
 
@@ -222,27 +230,47 @@ double SHUD_uncouple(FileIn *fin, FileOut *fout){
             MD->t0 = t0;
             MD->t1 = tout;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
+            if (etSubstepEnabled) {
+                flag = CVodeSetStopTime(mem1, tout);
+                check_flag(&flag, "CVodeSetStopTime", 1);
+            }
             flag = CVode(mem1, tout, u1, &t, CV_NORMAL);
             check_flag(&flag, "CVode1 SURF", 1);
             
             t = t0;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
+            if (etSubstepEnabled) {
+                flag = CVodeSetStopTime(mem2, tout);
+                check_flag(&flag, "CVodeSetStopTime", 1);
+            }
             flag = CVode(mem2, tout, u2, &t, CV_NORMAL);
             check_flag(&flag, "CVode2 UNSAT", 1);
             
             t = t0;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
+            if (etSubstepEnabled) {
+                flag = CVodeSetStopTime(mem3, tout);
+                check_flag(&flag, "CVodeSetStopTime", 1);
+            }
             flag = CVode(mem3, tout, u3, &t, CV_NORMAL);
             check_flag(&flag, "CVode3 GW", 1);
             
             t = t0;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
+            if (etSubstepEnabled) {
+                flag = CVodeSetStopTime(mem4, tout);
+                check_flag(&flag, "CVodeSetStopTime", 1);
+            }
             flag = CVode(mem4, tout, u4, &t, CV_NORMAL);
             check_flag(&flag, "CVode4 RIV", 1);
             
             if(lakeon && N5 > 0){
                 t = t0;
                 Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
+                if (etSubstepEnabled) {
+                    flag = CVodeSetStopTime(mem5, tout);
+                    check_flag(&flag, "CVodeSetStopTime", 1);
+                }
                 flag = CVode(mem5, tout, u2, &t, CV_NORMAL);
                 check_flag(&flag, "CVode5 LAKE", 1);
             }
