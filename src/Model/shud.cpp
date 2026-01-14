@@ -88,15 +88,20 @@ double SHUD(FileIn *fin, FileOut *fout){
         MD->PrintInit(fout->Init_update, t);
         /* inner loops to next output points with ET step size control */
         tnext += MD->CS.SolverStep;
-        while (t < tnext) {
+        while (t + ZERO < tnext) {
+            double tout = tnext;
+            if (MD->CS.ETStep > ZERO && MD->CS.ETStep + ZERO < MD->CS.SolverStep) {
+                tout = min(t + MD->CS.ETStep, tnext);
+            }
+
             MD->updateAllTimeSeries(t);
             MD->updateforcing(t);
             /* calculate Interception Storage */
-            MD->ET(t, tnext);
-            if(dummy_mode){
-                t = tnext;  /* dummy mode only. */
-            }else{
-                flag = CVode(mem, tnext, udata, &t, CV_NORMAL);
+            MD->ET(t, tout);
+            if (dummy_mode) {
+                t = tout; /* dummy mode only. */
+            } else {
+                flag = CVode(mem, tout, udata, &t, CV_NORMAL);
                 check_flag(&flag, "CVode", 1);
             }
         }
@@ -196,54 +201,52 @@ double SHUD_uncouple(FileIn *fin, FileOut *fout){
 //    fp2=fopen("y2.txt", "w");
 //    fp3=fopen("y3.txt", "w");
 //    fp4=fopen("y4.txt", "w");
-    double t0 = t, tnext_et = tnext;
+    double t0 = t;
     for (int i = 0; i < MD->CS.NumSteps && !ierr; i++) {
         /* inner loops to next output points with ET step size control */
         tnext += MD->CS.SolverStep;
-        while (t < tnext ) {
-//            if (t + MD->CS.ETStep >=tnext) {
-                tout = tnext;
-//            } else {
-//                tout = t + MD->CS.ETStep;
-//            }
+        while (t + ZERO < tnext) {
+            tout = tnext;
+            if (MD->CS.ETStep > ZERO && MD->CS.ETStep + ZERO < MD->CS.SolverStep) {
+                tout = min(t + MD->CS.ETStep, tnext);
+            }
+
             dt = tout - t;
+            t0 = t;
             MD->updateAllTimeSeries(t);
             MD->updateforcing(t);
-//            if(t >= tnext_et){
-                /* calculate Interception Storage */
-                MD->ET(t, tnext);
-//                tnext_et += MD->CS.ETStep;
-//            }
+            /* calculate Interception Storage */
+            MD->ET(t, tout);
             
-            t=t0;
-            MD->t0=t0; MD->t1=tout;
+            t = t0;
+            MD->t0 = t0;
+            MD->t1 = tout;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
             flag = CVode(mem1, tout, u1, &t, CV_NORMAL);
             check_flag(&flag, "CVode1 SURF", 1);
             
-            t=t0;
+            t = t0;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
             flag = CVode(mem2, tout, u2, &t, CV_NORMAL);
             check_flag(&flag, "CVode2 UNSAT", 1);
             
-            t=t0;
+            t = t0;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
             flag = CVode(mem3, tout, u3, &t, CV_NORMAL);
             check_flag(&flag, "CVode3 GW", 1);
             
-            t=t0;
+            t = t0;
             Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
             flag = CVode(mem4, tout, u4, &t, CV_NORMAL);
             check_flag(&flag, "CVode4 RIV", 1);
             
             if(lakeon && N5 > 0){
-                t=t0;
+                t = t0;
                 Global2Sub(MD->NumEle, MD->NumRiv, MD->NumLake);
                 flag = CVode(mem5, tout, u2, &t, CV_NORMAL);
                 check_flag(&flag, "CVode5 LAKE", 1);
             }
         }
-        t0 = t;
         MD->summary(u1, u2, u3, u4, u5);
         MD->CS.ExportResults(t);
         flag = MD->ScreenPrintu(t, i);

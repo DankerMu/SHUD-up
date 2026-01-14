@@ -41,6 +41,7 @@ void Model_Data::modelSummary(int end){
     screeninfo("\tModel starts at: %.2f day\n", CS.StartTime / 1440);
     screeninfo("\tModel ends at: %.2f day\n", CS.EndTime / 1440);
     screeninfo("\tModel time step(max): %.2f minutes\n", CS.MaxStep);
+    screeninfo("\tET/forcing step: %.2f minutes\n", CS.ETStep);
 //    screeninfo("\tModel time step(normal): %.2f minutes\n", CS.SolverStep);
     screeninfo("\tModel total number of steps(minimum): %d \n", CS.NumSteps);
     sprintf(str,"\tSize of model: \tNcell = %d \tNriver = %d\t NSeg = %d", NumEle, NumRiv, NumSegmt);
@@ -307,4 +308,3 @@ int Model_Data::ScreenPrint(double t, unsigned long it){
 #endif
     return flag;
 }
-
