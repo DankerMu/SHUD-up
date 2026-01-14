@@ -390,6 +390,8 @@ void Model_Data::read_forc_csv(const char *fn){
     for(int i=0; i < NumForc && fgets(str, MAXLEN, fp); i++)
     {
         sscanf(str, "%d %lf %lf %lf %lf %lf %s", &id, &lon, &lat, tsd_weather[i].xyz, tsd_weather[i].xyz+1, tsd_weather[i].xyz+2, shortname);
+        tsd_weather[i].lon_deg = lon;
+        tsd_weather[i].lat_deg = lat;
         sprintf(longname, "%s/%s", path, shortname);
 #ifdef DEBUG
         printf("debug:%d %d, %lf, %lf, %lf, %lf, %lf, %s\n", i+1, id, lon, lat,
@@ -398,9 +400,56 @@ void Model_Data::read_forc_csv(const char *fn){
         tsd_weather[i].fn.assign(longname);
     }
     fclose(fp);
+
+    /* Global solar lon/lat selection (v1) */
+    CS.solar_lon_deg = NA_VALUE;
+    CS.solar_lat_deg = NA_VALUE;
+    if (CS.solar_lonlat_mode == FIXED) {
+        CS.solar_lon_deg = CS.solar_lon_deg_fixed;
+        CS.solar_lat_deg = CS.solar_lat_deg_fixed;
+        if (CS.solar_lon_deg == NA_VALUE || CS.solar_lat_deg == NA_VALUE) {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=FIXED but SOLAR_LON_DEG/SOLAR_LAT_DEG is missing.\n");
+            fprintf(stderr, "  Fix: set SOLAR_LON_DEG and SOLAR_LAT_DEG in %s\n", pf_in->file_para);
+            myexit(ERRDATAIN);
+        }
+    } else if (CS.solar_lonlat_mode == FORCING_MEAN) {
+        double sum_lon = 0.0;
+        double sum_lat = 0.0;
+        int n = 0;
+        for (int i = 0; i < NumForc; i++) {
+            const double lo = tsd_weather[i].lon();
+            const double la = tsd_weather[i].lat();
+            if (lo == NA_VALUE || la == NA_VALUE) {
+                continue;
+            }
+            sum_lon += lo;
+            sum_lat += la;
+            n++;
+        }
+        if (n > 0) {
+            CS.solar_lon_deg = sum_lon / n;
+            CS.solar_lat_deg = sum_lat / n;
+        } else if (NumForc > 0) {
+            CS.solar_lon_deg = tsd_weather[0].lon();
+            CS.solar_lat_deg = tsd_weather[0].lat();
+        }
+    } else { /* FORCING_FIRST (default) */
+        if (NumForc > 0) {
+            CS.solar_lon_deg = tsd_weather[0].lon();
+            CS.solar_lat_deg = tsd_weather[0].lat();
+        }
+    }
+
+    printf("\tSolar lon/lat: mode=%s, lon=%.6f, lat=%.6f\n",
+           SolarLonLatModeName(CS.solar_lonlat_mode),
+           CS.solar_lon_deg,
+           CS.solar_lat_deg);
+
     printf("\tNumber of csv files: %d\n", NumForc);
     for(int i=0; i < NumForc; i++){
-        printf("\t Reading %d/%d: \t%s\n", i+1, NumForc, tsd_weather[i].fn.c_str());
+        printf("\t Reading %d/%d: \t%s\t(lon=%.6f, lat=%.6f)\n",
+               i+1, NumForc, tsd_weather[i].fn.c_str(),
+               tsd_weather[i].lon(), tsd_weather[i].lat());
         tsd_weather[i].read_csv();
     }
 }

@@ -16,6 +16,22 @@ enum RadiationInputMode{
     SWNET = 1
 };
 
+enum SolarLonLatMode{
+    FORCING_FIRST = 0,
+    FORCING_MEAN = 1,
+    FIXED = 2
+};
+
+static inline const char* SolarLonLatModeName(SolarLonLatMode mode)
+{
+    switch (mode) {
+        case FORCING_FIRST: return "FORCING_FIRST";
+        case FORCING_MEAN:  return "FORCING_MEAN";
+        case FIXED:         return "FIXED";
+        default:            return "UNKNOWN";
+    }
+}
+
 class Print_Ctrl{
 private:
     char    filename[MAXLEN];
@@ -37,7 +53,12 @@ private:
 public:
     Print_Ctrl();
     ~Print_Ctrl();
-    void    open_file(int a, int b, int radiation_input_mode);
+    void    open_file(int a,
+                      int b,
+                      int radiation_input_mode,
+                      SolarLonLatMode solar_lonlat_mode,
+                      double solar_lon_deg,
+                      double solar_lat_deg);
     void    PrintData (double dt, double t);
     void    setHeader(const char *s);
     void    Init(long st, int n, const char *s, int dt, double *x, int iFlux);
@@ -123,6 +144,16 @@ public:
                                          0 - SWDOWN (default, downward shortwave radiation)
                                          1 - SWNET (net shortwave radiation)
                                        */
+
+    SolarLonLatMode solar_lonlat_mode = FORCING_FIRST; /* SOLAR_LONLAT_MODE
+                                                          FORCING_FIRST (default)
+                                                          FORCING_MEAN
+                                                          FIXED (SOLAR_LON_DEG, SOLAR_LAT_DEG)
+                                                        */
+    double solar_lon_deg = NA_VALUE; /* Selected global longitude for solar geometry [deg] */
+    double solar_lat_deg = NA_VALUE; /* Selected global latitude for solar geometry [deg] */
+    double solar_lon_deg_fixed = NA_VALUE; /* SOLAR_LON_DEG when SOLAR_LONLAT_MODE=FIXED [deg] */
+    double solar_lat_deg_fixed = NA_VALUE; /* SOLAR_LAT_DEG when SOLAR_LONLAT_MODE=FIXED [deg] */
     
     double StartTime = 0.;      /* Start time of simulation [min]*/
     double EndTime = 14400;     /* End time of simulation [min]*/

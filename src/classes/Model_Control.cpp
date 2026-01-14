@@ -171,6 +171,44 @@ void Control_Data::read(const char *fn){
                 }
             }
         }
+        else if (strcasecmp("SOLAR_LONLAT_MODE", optstr) == 0) {
+            const SolarLonLatMode default_mode = FORCING_FIRST;
+            char mode_str[MAXLEN] = "";
+            solar_lonlat_mode = default_mode;
+            if (sscanf(str, "%s %s", optstr, mode_str) != 2) {
+                fprintf(stderr,
+                        "WARNING: SOLAR_LONLAT_MODE missing value in %s; using default %s (%d).\n",
+                        fn,
+                        SolarLonLatModeName(default_mode),
+                        default_mode);
+            } else if (strcasecmp(mode_str, "FORCING_FIRST") == 0) {
+                solar_lonlat_mode = FORCING_FIRST;
+            } else if (strcasecmp(mode_str, "FORCING_MEAN") == 0) {
+                solar_lonlat_mode = FORCING_MEAN;
+            } else if (strcasecmp(mode_str, "FIXED") == 0) {
+                solar_lonlat_mode = FIXED;
+            } else {
+                char *endptr = NULL;
+                const double mode_val = strtod(mode_str, &endptr);
+                if (endptr != NULL && *endptr == '\0' &&
+                    (mode_val == 0.0 || mode_val == 1.0 || mode_val == 2.0)) {
+                    solar_lonlat_mode = static_cast<SolarLonLatMode>(static_cast<int>(mode_val));
+                } else {
+                    fprintf(stderr,
+                            "WARNING: invalid SOLAR_LONLAT_MODE value '%s' in %s; using default %s (%d). "
+                            "Valid values: FORCING_FIRST/FORCING_MEAN/FIXED or 0/1/2.\n",
+                            mode_str,
+                            fn,
+                            SolarLonLatModeName(default_mode),
+                            default_mode);
+                    solar_lonlat_mode = default_mode;
+                }
+            }
+        }
+        else if (strcasecmp("SOLAR_LON_DEG", optstr) == 0)
+            solar_lon_deg_fixed = val;
+        else if (strcasecmp("SOLAR_LAT_DEG", optstr) == 0)
+            solar_lat_deg_fixed = val;
         else if (strcasecmp ("ET_STEP", optstr) == 0 || strcasecmp ("LSM_STEP", optstr) == 0)
             ETStep =  val;
         else if (strcasecmp ("START", optstr) == 0)
@@ -263,6 +301,11 @@ void Control_Data::read(const char *fn){
     }
     fprintf(stdout, "* \t RADIATION_INPUT_MODE: %s\n",
             radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
+    fprintf(stdout, "* \t SOLAR_LONLAT_MODE: %s\n", SolarLonLatModeName(solar_lonlat_mode));
+    if (solar_lonlat_mode == FIXED) {
+        fprintf(stdout, "* \t SOLAR_LON_DEG: %.6f\n", solar_lon_deg_fixed);
+        fprintf(stdout, "* \t SOLAR_LAT_DEG: %.6f\n", solar_lat_deg_fixed);
+    }
 }
 void Control_Data::write(const char *fn){
     
@@ -274,7 +317,12 @@ Print_Ctrl::Print_Ctrl(){}
 void Print_Ctrl::setHeader(const char *s){
     strcpy(header, s);
 }
-void Print_Ctrl::open_file(int a, int b, int radiation_input_mode){
+void Print_Ctrl::open_file(int a,
+                           int b,
+                           int radiation_input_mode,
+                           SolarLonLatMode solar_lonlat_mode,
+                           double solar_lon_deg,
+                           double solar_lat_deg){
     Ascii = a;
     Binary = b;
     double tmp;
@@ -283,6 +331,19 @@ void Print_Ctrl::open_file(int a, int b, int radiation_input_mode){
     }
     sprintf(filea, "%s.csv", filename);
     sprintf(fileb, "%s.dat", filename);
+
+    /* Binary header is fixed-size (1024 bytes) and should be deterministic. */
+    memset(header, 0, sizeof(header));
+    snprintf(header, sizeof(header),
+             "# SHUD output\n"
+             "# Radiation input mode: %s\n"
+             "# Solar lon/lat mode: %s\n"
+             "# Solar lon/lat (deg): lon=%.6f, lat=%.6f\n",
+             radiation_input_mode == SWNET ? "SWNET" : "SWDOWN",
+             SolarLonLatModeName(solar_lonlat_mode),
+             solar_lon_deg,
+             solar_lat_deg);
+
     if (Binary){
         fid_bin = fopen (fileb, "wb");
         CheckFile(fid_bin, fileb);
@@ -303,6 +364,8 @@ void Print_Ctrl::open_file(int a, int b, int radiation_input_mode){
         fprintf(fid_asc, "%d\t %d\t %ld\n", 0, NumVar, StartTime);
         fprintf(fid_asc, "# Radiation input mode: %s\n",
                 radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
+        fprintf(fid_asc, "# Solar lon/lat mode: %s\n", SolarLonLatModeName(solar_lonlat_mode));
+        fprintf(fid_asc, "# Solar lon/lat (deg): lon=%.6f, lat=%.6f\n", solar_lon_deg, solar_lat_deg);
         fprintf(fid_asc, "%s", "Time_min");
         for(int i = 0; i < NumVar; i++){
             fprintf(fid_asc, " \tX%d", i + 1);
