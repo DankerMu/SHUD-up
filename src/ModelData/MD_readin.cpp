@@ -478,42 +478,6 @@ void Model_Data::validateTimeStamps()
         myexit(ERRDATAIN);
     }
 
-    // 0) fail-fast: forcing must cover simulation period [CS.StartTime, CS.EndTime]
-    const double simStart = CS.StartTime;
-    const double simEnd = CS.EndTime;
-    if (simEnd + 1e-12 < simStart) {
-        fprintf(stderr, "\n  Fatal Error: Invalid simulation period (CS.StartTime > CS.EndTime).\n");
-        fprintf(stderr, "  CS.StartTime = %.3f min (%.6f day)\n", simStart, simStart / 1440.0);
-        fprintf(stderr, "  CS.EndTime   = %.3f min (%.6f day)\n", simEnd, simEnd / 1440.0);
-        fprintf(stderr, "  Fix: check START/END in %s\n", pf_in->file_para);
-        myexit(ERRDATAIN);
-    }
-    for (int i = 0; i < NumForc; i++) {
-        const double forcMin = tsd_weather[i].getMinTime();
-        const double forcMax = tsd_weather[i].getMaxTime();
-
-        const bool startCovered = (forcMin - simStart) <= 1e-6;
-        const bool endCovered = (simEnd - forcMax) <= 1e-6;
-        if (!startCovered || !endCovered) {
-            fprintf(stderr, "\n  Fatal Error: Forcing data coverage is insufficient for simulation.\n");
-            fprintf(stderr, "  File: %s\n", tsd_weather[i].fn.c_str());
-            fprintf(stderr, "  Simulation interval: [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
-                    simStart, simEnd, simStart / 1440.0, simEnd / 1440.0);
-            fprintf(stderr, "  Forcing coverage:    [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
-                    forcMin, forcMax, forcMin / 1440.0, forcMax / 1440.0);
-            if (!startCovered) {
-                fprintf(stderr, "  Issue: forcing starts AFTER simulation START.\n");
-            }
-            if (!endCovered) {
-                fprintf(stderr, "  Issue: forcing ends BEFORE simulation END.\n");
-            }
-            fprintf(stderr, "  Fix suggestions:\n");
-            fprintf(stderr, "    - Extend the forcing time-series (%s) to cover the simulation period.\n", tsd_weather[i].fn.c_str());
-            fprintf(stderr, "    - Or adjust START/END in %s to fit within forcing coverage.\n", pf_in->file_para);
-            myexit(ERRDATAIN);
-        }
-    }
-
     // 1) forcing: station file start_yyyymmdd == ForcStartTime
     for (int i = 0; i < NumForc; i++) {
         const std::string &filename = tsd_weather[i].fn;
