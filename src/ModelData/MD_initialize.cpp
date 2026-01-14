@@ -326,6 +326,11 @@ void Model_Data:: initialize_output (){
     
     for (int i = 0; i < CS.NumPrint; i++)
     {
-        CS.PCtrl[i].open_file(CS.Ascii, CS.Binary, CS.radiation_input_mode);
+        CS.PCtrl[i].open_file(CS.Ascii,
+                              CS.Binary,
+                              CS.radiation_input_mode,
+                              CS.solar_lonlat_mode,
+                              CS.solar_lon_deg,
+                              CS.solar_lat_deg);
     }
 }

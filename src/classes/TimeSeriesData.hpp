@@ -32,6 +32,11 @@ public:
     double  getMinTime() const;
     double  getMaxTime() const;
     double  xyz[3]={NA_VALUE, NA_VALUE, NA_VALUE};
+    double  lon_deg = NA_VALUE;
+    double  lat_deg = NA_VALUE;
+
+    double lon() const { return lon_deg; }
+    double lat() const { return lat_deg; }
 private:
     long StartTime;
     mutable int timeRangeCached = 0;

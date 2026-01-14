@@ -44,6 +44,9 @@ void Model_Data::modelSummary(int end){
     screeninfo("\tET/forcing step: %.2f minutes\n", CS.ETStep);
 //    screeninfo("\tModel time step(normal): %.2f minutes\n", CS.SolverStep);
     screeninfo("\tModel total number of steps(minimum): %d \n", CS.NumSteps);
+    screeninfo("\tSolar lon/lat mode: %s\n", SolarLonLatModeName(CS.solar_lonlat_mode));
+    screeninfo("\tSolar lon_deg: %.6f\n", CS.solar_lon_deg);
+    screeninfo("\tSolar lat_deg: %.6f\n", CS.solar_lat_deg);
     sprintf(str,"\tSize of model: \tNcell = %d \tNriver = %d\t NSeg = %d", NumEle, NumRiv, NumSegmt);
     screeninfo(str);
 #ifdef _OPENMP_ON
