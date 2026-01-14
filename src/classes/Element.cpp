@@ -134,12 +134,12 @@ void _Element::applyGeometry(_Node *Node){
      * 2) 计算两条边向量 v1, v2
      * 3) 叉积得到法向量 n = v1 × v2
      * 4) 单位化并确保 nz >= 0（若 nz < 0 则翻转法向量）
-     * 5) slopeAngle = acos(nz)
+     * 5) slopeAngle = atan2(hypot(nx,ny), nz)
      * 6) aspect = atan2(nx, ny)，并调整到 [0, 2*pi)
      *    这里采用 North=0（+y 方向为北），East=pi/2 的定义：
      *      - 若法向量水平投影指向 +y，则 aspect=0
      *      - 若法向量水平投影指向 +x，则 aspect=pi/2
-     * 7) 水平面（几乎无坡度）时 aspect = 0
+     * 7) 水平面（几乎无坡度）时 aspect = 0（用 slopeAngle 阈值判断以避免近水平面噪声）
      *
      * 注：
      * - 若三点共线（退化三角形），叉积长度为 0，此时回退为水平面：
@@ -183,13 +183,25 @@ void _Element::applyGeometry(_Node *Node){
             }
         }
 
-        /* Step 5: slopeAngle = acos(nz) (clamp nz for numerical safety) */
+        /*
+         * Step 5: slopeAngle = atan2(hypot(nx,ny), nz)
+         *
+         * 相比 acos(nz)，atan2 在 nz≈1（近水平面、小坡度）时数值更稳定：
+         * acos(1-ε) 会因为浮点精度导致有效位损失，从而引入 slopeAngle 噪声。
+         * 这里仍对 nz 做 [0,1] 截断以避免归一化误差带来的越界。
+         */
         const double nz_clamped = min(1.0, max(0.0, nz));
-        slopeAngle = acos(nz_clamped);
+        slopeAngle = atan2(hypot(nx, ny), nz_clamped);
 
-        /* Step 7: horizontal plane (or near horizontal) => aspect = 0 */
-        const double aspect_eps = 1e-12;
-        if (fabs(nx) <= aspect_eps && fabs(ny) <= aspect_eps) {
+        /*
+         * Step 7: horizontal plane (or near horizontal) => aspect = 0
+         *
+         * 近水平面时，nx/ny 的微小数值噪声会被 atan2 放大，导致 aspect 在 [0,2π)
+         * 内抖动。与其使用过小的 nx/ny 阈值（如 1e-12），这里改为基于坡度角判断：
+         * 当 slopeAngle < 1e-6 时视为水平面并固定 aspect=0。
+         */
+        const double aspect_flat_slope_eps = 1e-6;
+        if (slopeAngle < aspect_flat_slope_eps) {
             aspect = 0.0;
         } else {
             /* Step 6: aspect = atan2(nx, ny) and map to [0, 2*pi) */
