@@ -124,6 +124,84 @@ void _Element::applyGeometry(_Node *Node){
     slope[0] =  (z_surf - pz1)/ d1;
     slope[1] =  (z_surf - pz2)/ d1;
     slope[2] =  (z_surf - pz3)/ d1;
+
+    /*
+     * ================================================================
+     * Terrain geometry (normal vector / slope angle / aspect)
+     * ------------------------------------------------
+     * 计算步骤（与需求一一对应）：
+     * 1) 获取三个节点坐标 (x, y, z)：这里使用地表高程 zmax 作为地形面。
+     * 2) 计算两条边向量 v1, v2
+     * 3) 叉积得到法向量 n = v1 × v2
+     * 4) 单位化并确保 nz >= 0（若 nz < 0 则翻转法向量）
+     * 5) slopeAngle = acos(nz)
+     * 6) aspect = atan2(nx, ny)，并调整到 [0, 2*pi)
+     *    这里采用 North=0（+y 方向为北），East=pi/2 的定义：
+     *      - 若法向量水平投影指向 +y，则 aspect=0
+     *      - 若法向量水平投影指向 +x，则 aspect=pi/2
+     * 7) 水平面（几乎无坡度）时 aspect = 0
+     *
+     * 注：
+     * - 若三点共线（退化三角形），叉积长度为 0，此时回退为水平面：
+     *   (nx, ny, nz) = (0, 0, 1)，slopeAngle=0，aspect=0。
+     * ================================================================
+     */
+    {
+        /* Step 1: three node coordinates (surface points) */
+        const double p1x = x1, p1y = y1, p1z = zmax1;
+        const double p2x = x2, p2y = y2, p2z = zmax2;
+        const double p3x = x3, p3y = y3, p3z = zmax3;
+
+        /* Step 2: edge vectors v1 = p2 - p1, v2 = p3 - p1 */
+        const double v1x = p2x - p1x;
+        const double v1y = p2y - p1y;
+        const double v1z = p2z - p1z;
+        const double v2x = p3x - p1x;
+        const double v2y = p3y - p1y;
+        const double v2z = p3z - p1z;
+
+        /* Step 3: cross product n = v1 x v2 */
+        double nx_raw = v1y * v2z - v1z * v2y;
+        double ny_raw = v1z * v2x - v1x * v2z;
+        double nz_raw = v1x * v2y - v1y * v2x;
+
+        /* Step 4: normalize and ensure nz >= 0 */
+        const double nlen = sqrt(nx_raw * nx_raw + ny_raw * ny_raw + nz_raw * nz_raw);
+        if (nlen <= ZERO) {
+            /* Degenerate triangle (or extremely small): fall back to flat terrain */
+            nx = 0.0;
+            ny = 0.0;
+            nz = 1.0;
+        } else {
+            nx = nx_raw / nlen;
+            ny = ny_raw / nlen;
+            nz = nz_raw / nlen;
+            if (nz < 0.0) {
+                nx = -nx;
+                ny = -ny;
+                nz = -nz;
+            }
+        }
+
+        /* Step 5: slopeAngle = acos(nz) (clamp nz for numerical safety) */
+        const double nz_clamped = min(1.0, max(0.0, nz));
+        slopeAngle = acos(nz_clamped);
+
+        /* Step 7: horizontal plane (or near horizontal) => aspect = 0 */
+        const double aspect_eps = 1e-12;
+        if (fabs(nx) <= aspect_eps && fabs(ny) <= aspect_eps) {
+            aspect = 0.0;
+        } else {
+            /* Step 6: aspect = atan2(nx, ny) and map to [0, 2*pi) */
+            aspect = atan2(nx, ny);
+            if (aspect < 0.0) {
+                aspect += 2.0 * PI;
+            }
+            if (aspect >= 2.0 * PI) {
+                aspect -= 2.0 * PI;
+            }
+        }
+    }
 }
 void _Element::InitElement(){
     AquiferDepth = z_surf - z_bottom;

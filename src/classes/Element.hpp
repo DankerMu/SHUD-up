@@ -34,6 +34,10 @@ public:
     double z_bottom = NA_VALUE;    /* Aquifer Bottom Elevation of the triangle centroid */
     double z_surf = NA_VALUE;    /* Surface Elevation of the triangle centroid */
     double zcentroid = NA_VALUE;
+    /* Terrain geometry for TSR */
+    double nx = 0.0, ny = 0.0, nz = 1.0;  /* Unit normal vector */
+    double slopeAngle = 0.0;  /* Slope angle [0, pi/2] rad */
+    double aspect = 0.0;      /* Aspect [0, 2*pi) rad, North=0 */
     void printHeader(FILE *fp);
     void printInfo(FILE *fp);
 };
@@ -128,4 +132,3 @@ public:
     void printInfo(FILE *fp);
 };
 #endif /* Element_hpp */
-
