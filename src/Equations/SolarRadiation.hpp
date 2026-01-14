@@ -14,11 +14,26 @@ struct SolarPosition {
     double hourAngle;   /* hour angle [rad], 0 at solar noon, positive afternoon */
 };
 
+/*
+ * Compute solar position at simulation time.
+ *
+ * t_min is simulation time in minutes (not local clock time).
+ *
+ * Note: this overload estimates timezone from longitude using round(lon_deg / 15).
+ * This geometric estimate can be ~1 hour off in political timezones.
+ */
 SolarPosition solarPosition(double t_min,
                             double lat_deg,
                             double lon_deg,
                             const TimeContext& tc);
 
+/*
+ * Compute solar position at simulation time.
+ *
+ * t_min is simulation time in minutes (not local clock time).
+ *
+ * timezone_hours is the UTC offset in hours (e.g., UTC+8 = 8.0).
+ */
 SolarPosition solarPosition(double t_min,
                             double lat_deg,
                             double lon_deg,
@@ -33,4 +48,3 @@ double terrainFactor(double nx,
                      double cosz_min);
 
 #endif /* SolarRadiation_hpp */
-

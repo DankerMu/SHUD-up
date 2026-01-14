@@ -188,7 +188,10 @@ double terrainFactor(double nx, double ny, double nz, const SolarPosition& sp, d
         return 0.0;
     }
 
-    if (!isFinite(cap) || cap < 0.0) {
+    if (!isFinite(cap)) {
+        // Treat missing/invalid cap as "effectively uncapped" while still keeping a finite bound.
+        cap = 10.0;
+    } else if (cap < 0.0) {
         cap = 0.0;
     }
     if (!isFinite(cosz_min) || cosz_min < 0.0) {
