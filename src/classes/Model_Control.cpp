@@ -141,6 +141,36 @@ void Control_Data::read(const char *fn){
             UpdateICStep =  val;
         else if (strcasecmp ("ET_Mode", optstr) == 0)
             ET_Mode =  val;
+        else if (strcasecmp("RADIATION_INPUT_MODE", optstr) == 0) {
+            const int default_mode = SWDOWN;
+            char mode_str[MAXLEN] = "";
+            radiation_input_mode = default_mode;
+            if (sscanf(str, "%s %s", optstr, mode_str) != 2) {
+                fprintf(stderr,
+                        "WARNING: RADIATION_INPUT_MODE missing value in %s; using default %s (%d).\n",
+                        fn,
+                        default_mode == SWNET ? "SWNET" : "SWDOWN",
+                        default_mode);
+            } else if (strcasecmp(mode_str, "SWDOWN") == 0) {
+                radiation_input_mode = SWDOWN;
+            } else if (strcasecmp(mode_str, "SWNET") == 0) {
+                radiation_input_mode = SWNET;
+            } else {
+                char *endptr = NULL;
+                const double mode_val = strtod(mode_str, &endptr);
+                if (endptr != NULL && *endptr == '\0' && (mode_val == 0.0 || mode_val == 1.0)) {
+                    radiation_input_mode = (mode_val == 1.0) ? SWNET : SWDOWN;
+                } else {
+                    fprintf(stderr,
+                            "WARNING: invalid RADIATION_INPUT_MODE value '%s' in %s; using default %s (%d). "
+                            "Valid values: SWDOWN/SWNET or 0/1.\n",
+                            mode_str,
+                            fn,
+                            default_mode == SWNET ? "SWNET" : "SWDOWN",
+                            default_mode);
+                }
+            }
+        }
         else if (strcasecmp ("ET_STEP", optstr) == 0 || strcasecmp ("LSM_STEP", optstr) == 0)
             ETStep =  val;
         else if (strcasecmp ("START", optstr) == 0)
@@ -228,7 +258,11 @@ void Control_Data::read(const char *fn){
     SolverStep = MaxStep; // Improve it in future for overcasting.
     fclose (fp);
     updateSimPeriod();
-    fprintf(stdout, "* \t ET_STEP/LSM_STEP: %.2f min\n", ETStep);
+    if (Verbose || global_verbose_mode){
+        fprintf(stdout, "* \t ETStep: %.2f min\n", ETStep);
+    }
+    fprintf(stdout, "* \t RADIATION_INPUT_MODE: %s\n",
+            radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
 }
 void Control_Data::write(const char *fn){
     
@@ -240,7 +274,7 @@ Print_Ctrl::Print_Ctrl(){}
 void Print_Ctrl::setHeader(const char *s){
     strcpy(header, s);
 }
-void Print_Ctrl::open_file(int a, int b){
+void Print_Ctrl::open_file(int a, int b, int radiation_input_mode){
     Ascii = a;
     Binary = b;
     double tmp;
@@ -267,6 +301,8 @@ void Print_Ctrl::open_file(int a, int b){
         CheckFile(fid_asc, filea);
         fprintf(fid_asc, "# Timestamp semantics: left endpoint (t-Interval)\n");
         fprintf(fid_asc, "%d\t %d\t %ld\n", 0, NumVar, StartTime);
+        fprintf(fid_asc, "# Radiation input mode: %s\n",
+                radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
         fprintf(fid_asc, "%s", "Time_min");
         for(int i = 0; i < NumVar; i++){
             fprintf(fid_asc, " \tX%d", i + 1);
@@ -443,20 +479,24 @@ void Print_Ctrl::PrintData(double dt, double t){
     for (int i = 0; i < NumVar; i++){
         buffer[i] += *(PrintVar[i]);
     }
-    /* Use floor with small epsilon for numerical stability at boundaries.
-       This prevents missing output points due to floating-point errors
-       (e.g., 59.9999999 -> 60) while avoiding early triggers (unlike llround). */
-    t_floor = static_cast<long long>(floor(t + 0.001));
+    /* Small epsilon (minutes) for numerical stability when detecting output boundaries.
+       Prevents missing output points due to floating-point errors (e.g., 59.9999999 -> 60)
+       while avoiding early triggers. Value 0.001 min (0.06 s) is far below output
+       resolution (Time_min printed to 0.1 min) and typical solver steps. */
+    constexpr double OUTPUT_TRIGGER_EPSILON = 0.001;
+    t_floor = static_cast<long long>(floor(t + OUTPUT_TRIGGER_EPSILON));
     if ((t_floor % Interval) == 0){
         for (int i = 0; i < NumVar; i++){
             buffer[i] *= tau / NumUpdate ; /* Get the mean in the time-interval*/
         }
         NumUpdate = 0;
+        const double t_quantized =
+            static_cast<double>(t_floor - static_cast<long long>(Interval));
         if(Ascii){
-            fun_printASCII(t-Interval, dt);
+            fun_printASCII(t_quantized, dt);
         }
         if(Binary){
-            fun_printBINARY(t-Interval, dt);
+            fun_printBINARY(t_quantized, dt);
         }
         for (int i = 0; i < NumVar; i++){
             buffer[i] = 0.;  /* Reset the buffer */

@@ -326,7 +326,6 @@ void Model_Data:: initialize_output (){
     
     for (int i = 0; i < CS.NumPrint; i++)
     {
-        CS.PCtrl[i].open_file(CS.Ascii, CS.Binary);
+        CS.PCtrl[i].open_file(CS.Ascii, CS.Binary, CS.radiation_input_mode);
     }
 }
-

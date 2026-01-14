@@ -11,6 +11,11 @@
 #include "Macros.hpp"
 #include "ModelConfigure.hpp"
 
+enum RadiationInputMode{
+    SWDOWN = 0,
+    SWNET = 1
+};
+
 class Print_Ctrl{
 private:
     char    filename[MAXLEN];
@@ -32,7 +37,7 @@ private:
 public:
     Print_Ctrl();
     ~Print_Ctrl();
-    void    open_file(int a, int b);
+    void    open_file(int a, int b, int radiation_input_mode);
     void    PrintData (double dt, double t);
     void    setHeader(const char *s);
     void    Init(long st, int n, const char *s, int dt, double *x, int iFlux);
@@ -113,6 +118,11 @@ public:
                             1 - PET_Hargreaves (Rn, Tmax, Tmin)
                             2 - PET_Priestley_Taylor
                           */
+    
+    int     radiation_input_mode = 0; /* RADIATION_INPUT_MODE
+                                         0 - SWDOWN (default, downward shortwave radiation)
+                                         1 - SWNET (net shortwave radiation)
+                                       */
     
     double StartTime = 0.;      /* Start time of simulation [min]*/
     double EndTime = 14400;     /* End time of simulation [min]*/
