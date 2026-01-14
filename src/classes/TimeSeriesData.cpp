@@ -33,6 +33,7 @@ void _TimeSeriesData::initialize(int n)
     
     iNow = 0;
     nQue = 0;
+    linesConsumed = 2; // 2 header lines
     eof = 0;
     timeRangeCached = 0;
     minTime = NA_VALUE;
@@ -160,11 +161,11 @@ void _TimeSeriesData::read_csv()
             std::cout << "No of Queue = " << nQue << std::endl;;
         }
 #endif
-        for (int i = 0; i < MAXQUE * nQue + 2; i++) {
+        for (int i = 0; i < linesConsumed; i++) {
             /* Line 1= size of table; Line 2= Head of table */
             getline(file, str);
         }
-        long lineNo = (long)(MAXQUE * nQue + 2); // 1-based line number of last skipped line
+        long lineNo = static_cast<long>(linesConsumed); // 1-based line number of last skipped line
         bool hasPrev = false;
         double prevTimeMin = 0.0;
         long prevLineNo = 0;
@@ -215,6 +216,7 @@ void _TimeSeriesData::read_csv()
             Length++;
             i++;
         }
+        linesConsumed = static_cast<int>(lineNo);
         nQue++;            /* Number of the Queue was reload */
         if (!file.eof()) {
             eof = 0;

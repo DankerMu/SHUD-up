@@ -42,6 +42,7 @@ private:
     int eof;
     int iNow, iNext;
     int nQue = 0;
+    int linesConsumed = 0;
     double *ts[MAXQUE + 1];
     int pRing[MAXQUE + 1];
     
