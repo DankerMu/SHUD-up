@@ -150,8 +150,8 @@ public:
                                                           FORCING_MEAN
                                                           FIXED (SOLAR_LON_DEG, SOLAR_LAT_DEG)
                                                         */
-    double solar_lon_deg = NA_VALUE; /* Selected global longitude for solar geometry [deg] (currently recorded in outputs; not used in calculations) */
-    double solar_lat_deg = NA_VALUE; /* Selected global latitude for solar geometry [deg] (currently recorded in outputs; not used in calculations) */
+    double solar_lon_deg = NA_VALUE; /* Selected global longitude for solar geometry [deg] (used for TSR-mode solarPosition() calculation; also recorded in outputs) */
+    double solar_lat_deg = NA_VALUE; /* Selected global latitude for solar geometry [deg] (used for TSR-mode solarPosition() calculation; also recorded in outputs) */
     double solar_lon_deg_fixed = NA_VALUE; /* SOLAR_LON_DEG when SOLAR_LONLAT_MODE=FIXED [deg] */
     double solar_lat_deg_fixed = NA_VALUE; /* SOLAR_LAT_DEG when SOLAR_LONLAT_MODE=FIXED [deg] */
 
