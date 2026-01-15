@@ -54,6 +54,27 @@ Export one `.dat` to CSV:
 python3 validation/tsr/py/inspect_output.py output/ccw.base --export ccw.rn_factor.dat
 ```
 
+## TSR validation report (Markdown)
+
+Generate a TSR validation report (stats + plots + anomaly list) from a TSR-on output directory:
+
+```bash
+python3 validation/tsr/py/generate_report.py output/ccw.tsr
+```
+
+Default output:
+
+- Markdown: `output/ccw.tsr/report/report.md`
+- Plots: `output/ccw.tsr/report/plots/*.png`
+
+Common options:
+
+```bash
+python3 validation/tsr/py/generate_report.py output/ccw.tsr --output-dir output/ccw.tsr/report
+python3 validation/tsr/py/generate_report.py output/ccw.tsr --tolerance 1e-10
+python3 validation/tsr/py/generate_report.py output/ccw.tsr --sample-elements 1 100 500
+```
+
 ## Tests
 
 Run unit tests:
