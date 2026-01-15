@@ -30,3 +30,12 @@ validation/tsr/tmp/
 
 # Allow committing validation scripts (this repo ignores *.sh by default)
 !validation/**/*.sh
+
+# Python coverage artifacts
+.coverage
+htmlcov/
+coverage.xml
+
+# Local validation backups
+*.bak_phase_test
+*.bak_tsr_test

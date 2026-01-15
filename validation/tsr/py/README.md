@@ -66,7 +66,6 @@ To enforce coverage (requires `coverage`):
 
 ```bash
 python3 -m pip install coverage
-coverage run -m unittest discover -s validation/tsr/py -p 'test_*.py'
-coverage report --fail-under=90
+python3 -m coverage run -m unittest discover -s validation/tsr/py -p 'test_*.py'
+python3 -m coverage report --fail-under=90
 ```
-

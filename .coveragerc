@@ -1,0 +1,4 @@
+[run]
+source =
+    validation/tsr/py
+
