@@ -24,3 +24,9 @@ forcing
 rAnalysis/test.R
 *.*.swp
 *.DS_Store
+
+# Validation harness artifacts
+validation/tsr/tmp/
+
+# Allow committing validation scripts (this repo ignores *.sh by default)
+!validation/**/*.sh
