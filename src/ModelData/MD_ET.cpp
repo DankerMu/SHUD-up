@@ -43,17 +43,17 @@ void Model_Data::tReadForcing(double t, int i){
         if (bucket != tsr_solar_bucket) {
             tsr_solar_bucket = bucket;
             tsr_solar_t_aligned = t_aligned;
-	            /*
-	             * TSR 太阳位置近似（Terrain Shortwave Radiation）
-	             * - 使用单个全局太阳位置：来自 B2a 的 solar_lon_deg/solar_lat_deg（CS.solar_lon_deg/lat_deg）
-	             * - 物理假设：流域内太阳位置（高度角/方位角）的空间差异可忽略
-	             * - 适用范围：推荐用于特征长度 <200km 的流域
-	             * - 空间误差估计：<50km 优秀(<1%)；50-200km 可接受(<5%)；>200km 需改进(10-20%)
-	             */
-	            // forcing 时间为 UTC；必须显式传入 timezone_hours=0.0
-	            // 避免 solarPosition() 根据 lon 推算本地时区（round(lon/15)）导致相位偏移
-	            tsr_solar_pos = solarPosition(t_aligned, CS.solar_lat_deg, CS.solar_lon_deg, Time, 0.0);
-	        }
+            /*
+             * TSR 太阳位置近似（Terrain Shortwave Radiation）
+             * - 使用单个全局太阳位置：来自 B2a 的 solar_lon_deg/solar_lat_deg（CS.solar_lon_deg/lat_deg）
+             * - 物理假设：流域内太阳位置（高度角/方位角）的空间差异可忽略
+             * - 适用范围：推荐用于特征长度 <200km 的流域
+             * - 空间误差估计：<50km 优秀(<1%)；50-200km 可接受(<5%)；>200km 需改进(10-20%)
+             */
+            // forcing 时间为 UTC；必须显式传入 timezone_hours=0.0
+            // 避免 solarPosition() 根据 lon 推算本地时区（round(lon/15)）导致相位偏移
+            tsr_solar_pos = solarPosition(t_aligned, CS.solar_lat_deg, CS.solar_lon_deg, Time, 0.0);
+        }
 
         if (tsr_factor_bucket != nullptr && tsr_factor != nullptr) {
             if (tsr_factor_bucket[i] != bucket) {
