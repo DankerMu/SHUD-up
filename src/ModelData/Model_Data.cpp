@@ -98,6 +98,9 @@ void Model_Data::malloc_EleRiv(){
     qEleEvapo      = new double[NumEle];
     qEleTrans      = new double[NumEle];
     qElePrep    = new double[NumEle];
+    ele_rn_h_wm2 = new double[NumEle];
+    ele_rn_t_wm2 = new double[NumEle];
+    ele_rn_factor = new double[NumEle];
     qEleTF      = new double[NumEle];
     qEleETP     = new double[NumEle];
     qPotEvap     = new double[NumEle];
@@ -172,6 +175,9 @@ void Model_Data::malloc_EleRiv(){
     tsr_factor = new double[NumEle];
     tsr_factor_bucket = new long long[NumEle];
     for (int i = 0; i < NumEle; i++) {
+        ele_rn_h_wm2[i] = 0.0;
+        ele_rn_t_wm2[i] = 0.0;
+        ele_rn_factor[i] = 1.0;
         tsr_factor[i] = 1.0;
         tsr_factor_bucket[i] = -1;
     }

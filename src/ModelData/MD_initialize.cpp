@@ -296,6 +296,11 @@ void Model_Data:: initialize_output (){
         CS.PCtrl[ip++].Init(ForcStartTime, NumEle, pf_out->ele_q_ET[0], CS.dt_qe_et, qEleE_IC, 1, io_ele);
         CS.PCtrl[ip++].Init(ForcStartTime, NumEle, pf_out->ele_q_ET[1], CS.dt_qe_et, qEleTrans, 1, io_ele);
         CS.PCtrl[ip++].Init(ForcStartTime, NumEle, pf_out->ele_q_ET[2], CS.dt_qe_et, qEleEvapo, 1, io_ele);
+
+        /* TSR debug outputs (instantaneous, averaged over the output interval) */
+        CS.PCtrl[ip++].Init(ForcStartTime, NumEle, pf_out->file_ele_rn_h, CS.dt_qe_et, ele_rn_h_wm2, 0, io_ele);
+        CS.PCtrl[ip++].Init(ForcStartTime, NumEle, pf_out->file_ele_rn_t, CS.dt_qe_et, ele_rn_t_wm2, 0, io_ele);
+        CS.PCtrl[ip++].Init(ForcStartTime, NumEle, pf_out->file_ele_rn_factor, CS.dt_qe_et, ele_rn_factor, 0, io_ele);
     }
     
     
@@ -329,6 +334,7 @@ void Model_Data:: initialize_output (){
         CS.PCtrl[i].open_file(CS.Ascii,
                               CS.Binary,
                               CS.radiation_input_mode,
+                              CS.terrain_radiation,
                               CS.solar_lonlat_mode,
                               CS.solar_lon_deg,
                               CS.solar_lat_deg);

@@ -375,6 +375,7 @@ void Print_Ctrl::setHeader(const char *s){
 void Print_Ctrl::open_file(int a,
                            int b,
                            int radiation_input_mode,
+                           int terrain_radiation,
                            SolarLonLatMode solar_lonlat_mode,
                            double solar_lon_deg,
                            double solar_lat_deg){
@@ -392,9 +393,11 @@ void Print_Ctrl::open_file(int a,
     snprintf(header, sizeof(header),
              "# SHUD output\n"
              "# Radiation input mode: %s\n"
+             "# Terrain radiation (TSR): %s\n"
              "# Solar lon/lat mode: %s\n"
              "# Solar lon/lat (deg): lon=%.6f, lat=%.6f\n",
              radiation_input_mode == SWNET ? "SWNET" : "SWDOWN",
+             terrain_radiation ? "ON" : "OFF",
              SolarLonLatModeName(solar_lonlat_mode),
              solar_lon_deg,
              solar_lat_deg);
@@ -419,6 +422,8 @@ void Print_Ctrl::open_file(int a,
         fprintf(fid_asc, "%d\t %d\t %ld\n", 0, NumVar, StartTime);
         fprintf(fid_asc, "# Radiation input mode: %s\n",
                 radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
+        fprintf(fid_asc, "# Terrain radiation (TSR): %s\n",
+                terrain_radiation ? "ON" : "OFF");
         fprintf(fid_asc, "# Solar lon/lat mode: %s\n", SolarLonLatModeName(solar_lonlat_mode));
         fprintf(fid_asc, "# Solar lon/lat (deg): lon=%.6f, lat=%.6f\n", solar_lon_deg, solar_lat_deg);
         fprintf(fid_asc, "%s", "Time_min");

@@ -29,6 +29,7 @@ void Model_Data::tReadForcing(double t, int i){
     /* Shortwave radiation forcing (W/m^2) */
     const double dswrf_h = tsd_weather[idx].getX(t, i_rn);
     double dswrf_t = dswrf_h;
+    double factor = 1.0;
     if (CS.terrain_radiation) {
         int interval_min = CS.solar_update_interval;
         if (interval_min <= 0) {
@@ -49,10 +50,11 @@ void Model_Data::tReadForcing(double t, int i){
              * - 适用范围：推荐用于特征长度 <200km 的流域
              * - 空间误差估计：<50km 优秀(<1%)；50-200km 可接受(<5%)；>200km 需改进(10-20%)
              */
-            tsr_solar_pos = solarPosition(t_aligned, CS.solar_lat_deg, CS.solar_lon_deg, Time);
+            // forcing 时间为 UTC；必须显式传入 timezone_hours=0.0
+            // 避免 solarPosition() 根据 lon 推算本地时区（round(lon/15)）导致相位偏移
+            tsr_solar_pos = solarPosition(t_aligned, CS.solar_lat_deg, CS.solar_lon_deg, Time, 0.0);
         }
 
-        double factor = 1.0;
         if (tsr_factor_bucket != nullptr && tsr_factor != nullptr) {
             if (tsr_factor_bucket[i] != bucket) {
                 tsr_factor[i] = terrainFactor(Ele[i].nx,
@@ -67,6 +69,9 @@ void Model_Data::tReadForcing(double t, int i){
         }
         dswrf_t = dswrf_h * factor;
     }
+    if (ele_rn_h_wm2 != nullptr) ele_rn_h_wm2[i] = dswrf_h;
+    if (ele_rn_t_wm2 != nullptr) ele_rn_t_wm2[i] = dswrf_t;
+    if (ele_rn_factor != nullptr) ele_rn_factor[i] = factor;
     if (CS.radiation_input_mode == SWNET) {
         // SWNET mode: forcing 第6列已是净短波，不再乘 (1-Albedo)
         t_rn[i] = dswrf_t;
