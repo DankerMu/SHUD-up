@@ -271,7 +271,7 @@ double SHUD_uncouple(FileIn *fin, FileOut *fout){
                     flag = CVodeSetStopTime(mem5, tout);
                     check_flag(&flag, "CVodeSetStopTime", 1);
                 }
-                flag = CVode(mem5, tout, u2, &t, CV_NORMAL);
+                flag = CVode(mem5, tout, u5, &t, CV_NORMAL);
                 check_flag(&flag, "CVode5 LAKE", 1);
             }
         }
