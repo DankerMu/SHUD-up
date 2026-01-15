@@ -87,6 +87,8 @@ If you don't use `gcc`, you may edit the *Makefile* before compiling.
 ./shud ccw
 ```
 
+Time semantics (input/runtime/output): see `docs/time_semantics.md`.
+
 The screen looks shoud be:
 ![screenshot](Fig/screenshot.png)
 
@@ -117,4 +119,3 @@ python3 -m unittest discover -s validation/tsr/py -p 'test_*.py'
 python3 -m coverage run -m unittest discover -s validation/tsr/py -p 'test_*.py'
 python3 -m coverage report --fail-under=90
 ```
-
