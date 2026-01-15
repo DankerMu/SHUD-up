@@ -94,5 +94,27 @@ The screen looks shoud be:
 
 The output files from the SHUD model is save in `./output/ccw.out`.  The R package, SHUDtoolbox, helps to load the input/output files of SHUD. More details about prepare SHUD data, model input/output and visualization is available in SHUD website (https://www.shud.xyz) and help information of SHUDtoolbox.
 
+## TSR validation (Python vs C++)
 
+This repo includes a TSR (Terrain Solar Radiation) validation workflow under `validation/tsr/`.
+
+Generate TSR=ON outputs for `ccw`:
+
+```bash
+bash validation/tsr/run_tsr.sh
+```
+
+Recompute TSR factor + `rn_t` in Python (C++-consistent) and compare pointwise:
+
+```bash
+python3 validation/tsr/py/compare_tsr.py output/ccw.tsr --tol 1e-10
+```
+
+Run Python unit tests (and coverage, optional):
+
+```bash
+python3 -m unittest discover -s validation/tsr/py -p 'test_*.py'
+python3 -m coverage run -m unittest discover -s validation/tsr/py -p 'test_*.py'
+python3 -m coverage report --fail-under=90
+```
 
