@@ -19,6 +19,7 @@
 #include "is_sm_et.hpp"
 #include "Flux_RiverElement.hpp"
 #include "TimeContext.hpp"
+#include "SolarRadiation.hpp"
 #include "Macros.hpp"
 #include "AccTemperature.hpp"
 using namespace std;
@@ -201,6 +202,12 @@ private:
     double *t_lai;
     double *t_mf;
 //    double *t_hc;  /* New defination: Height of Crop. void in temporary*/
+    /* Terrain solar radiation (TSR) cache */
+    double *tsr_factor = nullptr;
+    long long *tsr_factor_bucket = nullptr;
+    long long tsr_solar_bucket = -1;
+    double tsr_solar_t_aligned = NA_VALUE;
+    SolarPosition tsr_solar_pos{};
 public:
     /* Methods: */
     Model_Data();

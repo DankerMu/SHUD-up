@@ -459,7 +459,7 @@ void Model_Data::read_forc_csv(const char *fn){
     fclose(fp);
 
     /* Global solar lon/lat selection (v1)
-       Note: currently recorded/exported for traceability only; not used in solar/radiation calculations. */
+       Note: used for TSR-mode solarPosition() calculation; also recorded/exported for traceability. */
     CS.solar_lon_deg = NA_VALUE;
     CS.solar_lat_deg = NA_VALUE;
     if (CS.solar_lonlat_mode == FIXED) {
@@ -865,6 +865,8 @@ void Model_Data::FreeData(){
     delete[]    t_vp;
     delete[]    t_lai;
     delete[]    t_mf;
+    delete[]    tsr_factor;
+    delete[]    tsr_factor_bucket;
 //    delete[]    t_hc;
     
     //read_rivseg()

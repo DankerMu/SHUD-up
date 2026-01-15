@@ -47,6 +47,10 @@ void Model_Data::modelSummary(int end){
     screeninfo("\tSolar lon/lat mode: %s\n", SolarLonLatModeName(CS.solar_lonlat_mode));
     screeninfo("\tSolar lon_deg: %.6f\n", CS.solar_lon_deg);
     screeninfo("\tSolar lat_deg: %.6f\n", CS.solar_lat_deg);
+    screeninfo("\tTerrain radiation (TSR): %s\n", CS.terrain_radiation ? "ON" : "OFF");
+    screeninfo("\tSolar update interval: %d min\n", CS.solar_update_interval);
+    screeninfo("\tRAD_FACTOR_CAP: %.6f\n", CS.rad_factor_cap);
+    screeninfo("\tRAD_COSZ_MIN: %.6f\n", CS.rad_cosz_min);
     sprintf(str,"\tSize of model: \tNcell = %d \tNriver = %d\t NSeg = %d", NumEle, NumRiv, NumSegmt);
     screeninfo(str);
 #ifdef _OPENMP_ON
@@ -163,6 +167,17 @@ void Model_Data::malloc_EleRiv(){
     t_lai   = new double[NumEle];  //
     t_mf    = new double[NumEle];  //
 //    t_hc    = new double[NumEle];  //
+
+    /* TSR cache */
+    tsr_factor = new double[NumEle];
+    tsr_factor_bucket = new long long[NumEle];
+    for (int i = 0; i < NumEle; i++) {
+        tsr_factor[i] = 1.0;
+        tsr_factor_bucket[i] = -1;
+    }
+    tsr_solar_bucket = -1;
+    tsr_solar_t_aligned = NA_VALUE;
+    tsr_solar_pos = SolarPosition{};
 }
 
 void Model_Data::copyCalib(){

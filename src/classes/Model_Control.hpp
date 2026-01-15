@@ -150,10 +150,16 @@ public:
                                                           FORCING_MEAN
                                                           FIXED (SOLAR_LON_DEG, SOLAR_LAT_DEG)
                                                         */
-    double solar_lon_deg = NA_VALUE; /* Selected global longitude for solar geometry [deg] (currently recorded in outputs; not used in calculations) */
-    double solar_lat_deg = NA_VALUE; /* Selected global latitude for solar geometry [deg] (currently recorded in outputs; not used in calculations) */
+    double solar_lon_deg = NA_VALUE; /* Selected global longitude for solar geometry [deg] (used for TSR-mode solarPosition() calculation; also recorded in outputs) */
+    double solar_lat_deg = NA_VALUE; /* Selected global latitude for solar geometry [deg] (used for TSR-mode solarPosition() calculation; also recorded in outputs) */
     double solar_lon_deg_fixed = NA_VALUE; /* SOLAR_LON_DEG when SOLAR_LONLAT_MODE=FIXED [deg] */
     double solar_lat_deg_fixed = NA_VALUE; /* SOLAR_LAT_DEG when SOLAR_LONLAT_MODE=FIXED [deg] */
+
+    /* Terrain solar radiation (TSR) correction */
+    int terrain_radiation = 0;     /* TERRAIN_RADIATION: 0/1 */
+    int solar_update_interval = 60; /* SOLAR_UPDATE_INTERVAL [min] */
+    double rad_factor_cap = 5.0;    /* RAD_FACTOR_CAP: upper bound for TSR factor */
+    double rad_cosz_min = 0.05;     /* RAD_COSZ_MIN: lower bound for cosZ in TSR denominator */
     
     double StartTime = 0.;      /* Start time of simulation [min]*/
     double EndTime = 14400;     /* End time of simulation [min]*/

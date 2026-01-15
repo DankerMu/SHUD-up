@@ -5,6 +5,8 @@
 //
 
 #include "Model_Control.hpp"
+
+#include <cmath>
 void PrintOutDt::defaultmode(){
     int dt = 1440;
     /* Element storage */
@@ -209,6 +211,55 @@ void Control_Data::read(const char *fn){
             solar_lon_deg_fixed = val;
         else if (strcasecmp("SOLAR_LAT_DEG", optstr) == 0)
             solar_lat_deg_fixed = val;
+        else if (strcasecmp("TERRAIN_RADIATION", optstr) == 0) {
+            const int flag = (int)val;
+            if (flag == 0 || flag == 1) {
+                terrain_radiation = flag;
+            } else {
+                fprintf(stderr,
+                        "WARNING: invalid TERRAIN_RADIATION value %.3f in %s; using %d. Valid values: 0/1.\n",
+                        val,
+                        fn,
+                        terrain_radiation);
+            }
+        }
+        else if (strcasecmp("SOLAR_UPDATE_INTERVAL", optstr) == 0) {
+            const int interval = (int)val;
+            if (interval > 0) {
+                solar_update_interval = interval;
+            } else {
+                fprintf(stderr,
+                        "WARNING: invalid SOLAR_UPDATE_INTERVAL value %.3f in %s; using %d (min). Must be > 0.\n",
+                        val,
+                        fn,
+                        solar_update_interval);
+            }
+        }
+        else if (strcasecmp("RAD_FACTOR_CAP", optstr) == 0) {
+            if (std::isfinite(val) && val > 0.0) {
+                rad_factor_cap = val;
+            } else {
+                fprintf(stderr,
+                        "WARNING: invalid RAD_FACTOR_CAP value %.3f in %s; using %.3f. Must be finite and > 0.\n",
+                        val,
+                        fn,
+                        rad_factor_cap);
+            }
+        }
+        else if (strcasecmp("RAD_COSZ_MIN", optstr) == 0) {
+            if (std::isfinite(val) && val >= 0.0) {
+                rad_cosz_min = val;
+                if (rad_cosz_min > 1.0) {
+                    rad_cosz_min = 1.0;
+                }
+            } else {
+                fprintf(stderr,
+                        "WARNING: invalid RAD_COSZ_MIN value %.3f in %s; using %.3f. Must be finite and >= 0.\n",
+                        val,
+                        fn,
+                        rad_cosz_min);
+            }
+        }
         else if (strcasecmp ("ET_STEP", optstr) == 0 || strcasecmp ("LSM_STEP", optstr) == 0)
             ETStep =  val;
         else if (strcasecmp ("START", optstr) == 0)
@@ -306,6 +357,10 @@ void Control_Data::read(const char *fn){
         fprintf(stdout, "* \t SOLAR_LON_DEG: %.6f\n", solar_lon_deg_fixed);
         fprintf(stdout, "* \t SOLAR_LAT_DEG: %.6f\n", solar_lat_deg_fixed);
     }
+    fprintf(stdout, "* \t TERRAIN_RADIATION: %d\n", terrain_radiation);
+    fprintf(stdout, "* \t SOLAR_UPDATE_INTERVAL: %d min\n", solar_update_interval);
+    fprintf(stdout, "* \t RAD_FACTOR_CAP: %.6f\n", rad_factor_cap);
+    fprintf(stdout, "* \t RAD_COSZ_MIN: %.6f\n", rad_cosz_min);
 }
 void Control_Data::write(const char *fn){
     
