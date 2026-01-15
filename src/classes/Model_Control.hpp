@@ -56,6 +56,7 @@ public:
     void    open_file(int a,
                       int b,
                       int radiation_input_mode,
+                      int terrain_radiation,
                       SolarLonLatMode solar_lonlat_mode,
                       double solar_lon_deg,
                       double solar_lat_deg);

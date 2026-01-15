@@ -93,6 +93,9 @@ void FileIn:: setInFilePath(char * indir, char *  pjrname){
 
 FileOut::FileOut(){
     setsuffix("");
+    file_ele_rn_h[0] = '\0';
+    file_ele_rn_t[0] = '\0';
+    file_ele_rn_factor[0] = '\0';
 }
 void FileOut::setsuffix(const char *s){
     strcpy(suffix, s);
@@ -146,6 +149,10 @@ void FileOut::updateFilePath(){
     sprintf(ele_q_infil, "%s/%s%s.elevinfil", outpath, projectname, suffix);
     sprintf(ele_q_exfil, "%s/%s%s.elevexfil", outpath, projectname, suffix);
     sprintf(ele_q_rech, "%s/%s%s.elevrech", outpath, projectname, suffix);
+
+    sprintf(file_ele_rn_h, "%s/%s%s.rn_h", outpath, projectname, suffix);
+    sprintf(file_ele_rn_t, "%s/%s%s.rn_t", outpath, projectname, suffix);
+    sprintf(file_ele_rn_factor, "%s/%s%s.rn_factor", outpath, projectname, suffix);
     
     //    sprintf(ele_Q_surf, "%s/%s%s.eleqsurf", outpath, projname);
     //    sprintf(ele_Q_sub, "%s/%s%s.eleqsub", outpath, projname);
@@ -316,6 +323,9 @@ void FileOut::copy(FileOut *p){
     strcpy(   ele_q_ETA, p->ele_q_ETA );
     strcpy(   ele_q_prcp, p->ele_q_prcp );
     strcpy(   ele_q_netprcp, p->ele_q_netprcp );
+    strcpy(   file_ele_rn_h, p->file_ele_rn_h );
+    strcpy(   file_ele_rn_t, p->file_ele_rn_t );
+    strcpy(   file_ele_rn_factor, p->file_ele_rn_factor );
     strcpy(   ele_Q_surfTot, p->ele_Q_surfTot );
     strcpy(   ele_Q_rsurf, p->ele_Q_rsurf );
     strcpy(   ele_Q_rsub, p->ele_Q_rsub );

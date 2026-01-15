@@ -136,14 +136,17 @@ public:
     double *Qe2r_Surf;
     double *Qe2r_Sub;
     
-    double *yEleWetFront;        /* Weting Front */
-    
-    double *qElePrep;        /* Precep. on each element */
-    double *qEleETloss;
-    double *qEleNetPrep;    /* Net precep. on each elment */
-    double *qEleInfil;    /* Variable infiltration rate */
-    double *qEleExfil;    /* Variable exfiltration rate */
-    double *qEleRecharge;    /* Recharge rate to GW */
+	    double *yEleWetFront;        /* Weting Front */
+	    
+	    double *qElePrep;        /* Precep. on each element */
+	    double *ele_rn_h_wm2 = nullptr; /* Shortwave forcing on horizontal plane [W/m^2] */
+	    double *ele_rn_t_wm2 = nullptr; /* Terrain-corrected shortwave forcing [W/m^2] */
+	    double *ele_rn_factor = nullptr; /* Terrain factor (TSR) [-] */
+	    double *qEleETloss;
+	    double *qEleNetPrep;    /* Net precep. on each elment */
+	    double *qEleInfil;    /* Variable infiltration rate */
+	    double *qEleExfil;    /* Variable exfiltration rate */
+	    double *qEleRecharge;    /* Recharge rate to GW */
     double *yEleSnowGrnd;    /* Snow depth on ground element */
     double *yEleSnowCanopy;    /* Snow depth on canopy element */
     double *yEleISmax;    /* Maximum interception storage (liquid

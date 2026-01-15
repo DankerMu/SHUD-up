@@ -96,6 +96,10 @@ public:
     char ele_q_ETA[MAXLEN];
     char ele_q_prcp[MAXLEN];
     char ele_q_netprcp[MAXLEN];
+    //TSR debug outputs
+    char file_ele_rn_h[MAXLEN];
+    char file_ele_rn_t[MAXLEN];
+    char file_ele_rn_factor[MAXLEN];
 //    char ele_Q_surf[MAXLEN];
 //    char ele_Q_sub[MAXLEN];
     char ele_Q_surfTot[MAXLEN];

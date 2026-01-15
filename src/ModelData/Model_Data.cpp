@@ -94,14 +94,17 @@ void Model_Data::malloc_EleRiv(){
     Qe2r_Surf = new double[NumEle]; //5.1
     Qe2r_Sub  = new double[NumEle]; // 5.2
     
-    qEleE_IC      = new double[NumEle];
-    qEleEvapo      = new double[NumEle];
-    qEleTrans      = new double[NumEle];
-    qElePrep    = new double[NumEle];
-    qEleTF      = new double[NumEle];
-    qEleETP     = new double[NumEle];
-    qPotEvap     = new double[NumEle];
-    qPotTran    = new double[NumEle];
+	    qEleE_IC      = new double[NumEle];
+	    qEleEvapo      = new double[NumEle];
+	    qEleTrans      = new double[NumEle];
+	    qElePrep    = new double[NumEle];
+	    ele_rn_h_wm2 = new double[NumEle];
+	    ele_rn_t_wm2 = new double[NumEle];
+	    ele_rn_factor = new double[NumEle];
+	    qEleTF      = new double[NumEle];
+	    qEleETP     = new double[NumEle];
+	    qPotEvap     = new double[NumEle];
+	    qPotTran    = new double[NumEle];
     qEleETA     = new double[NumEle];
     qEs     = new double[NumEle];
     qEu     = new double[NumEle];
@@ -169,12 +172,15 @@ void Model_Data::malloc_EleRiv(){
 //    t_hc    = new double[NumEle];  //
 
     /* TSR cache */
-    tsr_factor = new double[NumEle];
-    tsr_factor_bucket = new long long[NumEle];
-    for (int i = 0; i < NumEle; i++) {
-        tsr_factor[i] = 1.0;
-        tsr_factor_bucket[i] = -1;
-    }
+	    tsr_factor = new double[NumEle];
+	    tsr_factor_bucket = new long long[NumEle];
+	    for (int i = 0; i < NumEle; i++) {
+	        ele_rn_h_wm2[i] = 0.0;
+	        ele_rn_t_wm2[i] = 0.0;
+	        ele_rn_factor[i] = 1.0;
+	        tsr_factor[i] = 1.0;
+	        tsr_factor_bucket[i] = -1;
+	    }
     tsr_solar_bucket = -1;
     tsr_solar_t_aligned = NA_VALUE;
     tsr_solar_pos = SolarPosition{};

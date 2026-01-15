@@ -23,25 +23,26 @@ void Model_Data::tReadForcing(double t, int i){
     t_temp[i] = TemperatureOnElevation(t0, Ele[i].z_surf, tsd_weather[idx].xyz[2]) +  gc.cTemp;
     t_lai[i] = tsd_LAI.getX(t, Ele[i].iLC) * gc.cLAItsd ;
     lai = t_lai[i];
-    t_mf[i] = tsd_MF.getX(t, Ele[i].iMF) * gc.cMF / 1440.;  /*  [m/day/C] to [m/min/C].
-                                                            1.6 ~ 6.0 mm/day/C is typical value in USDA book
-                                                            Input is 1.4 ~ 3.0 mm/d/c */
-    /* Shortwave radiation forcing (W/m^2) */
-    const double dswrf_h = tsd_weather[idx].getX(t, i_rn);
-    double dswrf_t = dswrf_h;
-    if (CS.terrain_radiation) {
-        int interval_min = CS.solar_update_interval;
-        if (interval_min <= 0) {
-            interval_min = 60;
+	    t_mf[i] = tsd_MF.getX(t, Ele[i].iMF) * gc.cMF / 1440.;  /*  [m/day/C] to [m/min/C].
+	                                                            1.6 ~ 6.0 mm/day/C is typical value in USDA book
+	                                                            Input is 1.4 ~ 3.0 mm/d/c */
+	    /* Shortwave radiation forcing (W/m^2) */
+	    const double dswrf_h = tsd_weather[idx].getX(t, i_rn);
+	    double dswrf_t = dswrf_h;
+	    double factor = 1.0;
+	    if (CS.terrain_radiation) {
+	        int interval_min = CS.solar_update_interval;
+	        if (interval_min <= 0) {
+	            interval_min = 60;
         }
 
         /* Timestamp alignment: left endpoint of SOLAR_UPDATE_INTERVAL bucket */
         const double bucket_eps = 1.0e-6; /* [min] */
         const long long bucket = (long long)floor((t + bucket_eps) / (double)interval_min);
         const double t_aligned = (double)bucket * (double)interval_min;
-        if (bucket != tsr_solar_bucket) {
-            tsr_solar_bucket = bucket;
-            tsr_solar_t_aligned = t_aligned;
+	        if (bucket != tsr_solar_bucket) {
+	            tsr_solar_bucket = bucket;
+	            tsr_solar_t_aligned = t_aligned;
             /*
              * TSR 太阳位置近似（Terrain Shortwave Radiation）
              * - 使用单个全局太阳位置：来自 B2a 的 solar_lon_deg/solar_lat_deg（CS.solar_lon_deg/lat_deg）
@@ -49,28 +50,30 @@ void Model_Data::tReadForcing(double t, int i){
              * - 适用范围：推荐用于特征长度 <200km 的流域
              * - 空间误差估计：<50km 优秀(<1%)；50-200km 可接受(<5%)；>200km 需改进(10-20%)
              */
-            tsr_solar_pos = solarPosition(t_aligned, CS.solar_lat_deg, CS.solar_lon_deg, Time);
-        }
-
-        double factor = 1.0;
-        if (tsr_factor_bucket != nullptr && tsr_factor != nullptr) {
-            if (tsr_factor_bucket[i] != bucket) {
-                tsr_factor[i] = terrainFactor(Ele[i].nx,
-                                              Ele[i].ny,
+	            tsr_solar_pos = solarPosition(t_aligned, CS.solar_lat_deg, CS.solar_lon_deg, Time);
+	        }
+	
+	        if (tsr_factor_bucket != nullptr && tsr_factor != nullptr) {
+	            if (tsr_factor_bucket[i] != bucket) {
+	                tsr_factor[i] = terrainFactor(Ele[i].nx,
+	                                              Ele[i].ny,
                                               Ele[i].nz,
                                               tsr_solar_pos,
                                               CS.rad_factor_cap,
                                               CS.rad_cosz_min);
                 tsr_factor_bucket[i] = bucket;
             }
-            factor = tsr_factor[i];
-        }
-        dswrf_t = dswrf_h * factor;
-    }
-    if (CS.radiation_input_mode == SWNET) {
-        // SWNET mode: forcing 第6列已是净短波，不再乘 (1-Albedo)
-        t_rn[i] = dswrf_t;
-    } else {
+	            factor = tsr_factor[i];
+	        }
+	        dswrf_t = dswrf_h * factor;
+	    }
+	    if (ele_rn_h_wm2 != nullptr) ele_rn_h_wm2[i] = dswrf_h;
+	    if (ele_rn_t_wm2 != nullptr) ele_rn_t_wm2[i] = dswrf_t;
+	    if (ele_rn_factor != nullptr) ele_rn_factor[i] = factor;
+	    if (CS.radiation_input_mode == SWNET) {
+	        // SWNET mode: forcing 第6列已是净短波，不再乘 (1-Albedo)
+	        t_rn[i] = dswrf_t;
+	    } else {
         // SWDOWN mode (default): forcing 第6列是下行短波，需乘 (1-Albedo) 净化
         t_rn[i] = dswrf_t * (1 - Ele[i].Albedo);
     }

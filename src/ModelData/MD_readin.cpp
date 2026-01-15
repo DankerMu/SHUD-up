@@ -789,11 +789,14 @@ void Model_Data::FreeData(){
     delete[]    Qe2r_Surf; // 5.1
     delete[]    Qe2r_Sub; // 5.2
     
-    delete[]    qElePrep;
-    delete[]    qEleTF;
-    delete[]    qEleETP;
-    delete[]    qEleETA;
-    delete[]    qEleE_IC;
+	    delete[]    qElePrep;
+	    delete[]    ele_rn_h_wm2;
+	    delete[]    ele_rn_t_wm2;
+	    delete[]    ele_rn_factor;
+	    delete[]    qEleTF;
+	    delete[]    qEleETP;
+	    delete[]    qEleETA;
+	    delete[]    qEleE_IC;
     delete[]    qEleTrans;
     delete[]    qEleEvapo;
     delete[]    qPotEvap;
