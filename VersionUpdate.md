@@ -35,8 +35,21 @@ MODIFICATIONS/ADDITIONS from v1.0
     3. Change of the *.cfg.ic* file format, since the initial condition for lake stage is added. Three table (v2.0) (element, river reach and lake) exist within the file, instead of two tables (v1.0).
 8. Temporary permafrost parameterization scheme is added; yet, the testing and validation is on the track.
 9. Temperature decreases as elevation increases, dT/dz = 0.00065  Adiabatic Lapse Rate 6.5 [$K/km$]
-99. Lots of bugs are fixed. 
+99. Lots of bugs are fixed.
 
- 
+## SHUD v2.1 (2025.01)
+
+MODIFICATIONS/ADDITIONS from v2.0
+
+1. Add Terrain Solar Radiation (TSR) module to correct shortwave radiation based on slope and aspect.
+2. New configuration parameters: TERRAIN_RADIATION, SOLAR_UPDATE_INTERVAL, RAD_FACTOR_CAP, RAD_COSZ_MIN, RADIATION_INPUT_MODE, SOLAR_LONLAT_MODE.
+3. New diagnostic outputs when TSR enabled: *.rn_h.dat (horizontal radiation), *.rn_t.dat (terrain-corrected radiation), *.rn_factor.dat (TSR factor).
+4. Enhanced binary output file header with metadata (radiation mode, TSR status, solar coordinates).
+5. Add validation framework in validation/tsr/ with Python dat reader and unit tests.
+6. Add post-processing tools in post_analysis/ for TSR effect comparison.
+
+See docs/TSR_Technical_Reference.md for detailed documentation.
+
+
 
 
