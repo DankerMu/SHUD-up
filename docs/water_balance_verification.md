@@ -163,6 +163,12 @@ SHUD_WB_DIAG=1 SHUD_VALIDATION_END_DAYS=2 SHUD_VALIDATION_DT_QE_ET_MIN=60 \
   bash validation/tsr/run_tsr.sh
 ```
 
+生成本文档所用可视化图（输出到 `docs/figures/water_balance/`）：
+
+```bash
+python3 post_analysis/plot_water_balance_verification.py
+```
+
 脚本会生成（或覆盖并备份）`output/ccw.tsr/ccw.*.dat`；水量平衡相关输出位于 `output/ccw.tsr/` 下：
 
 - `ccw.elewb3_resid.dat`
@@ -214,6 +220,10 @@ SHUD_WB_DIAG=1 SHUD_VALIDATION_END_DAYS=2 SHUD_VALIDATION_DT_QE_ET_MIN=60 \
 
 结论：2 天短跑（按小时区间）下，全域残差量级为 **0.01 mm/小时区间**，累计误差约 **0.017 mm/2天**，可视为“数值闭合非常好”。这也说明：如果关注的是**守恒性 bug**（例如漏记/重记某个库容或通量），用短跑往往就能暴露出来。
 
+（图）2 天短跑的全域残差时序（含累计残差）：
+
+![](figures/water_balance/basin_residual_2d.png)
+
 #### 6.0.2 逐 element 残差量级（单位：mm/小时区间）
 
 这里统计的是 `|resid|` 的分布（对“时间×element”的所有样本一起统计）。
@@ -241,6 +251,14 @@ SHUD_WB_DIAG=1 SHUD_VALIDATION_END_DAYS=2 SHUD_VALIDATION_DT_QE_ET_MIN=60 \
 
 结论：在默认 `MAX_SOLVER_STEP=10 min`、按天区间聚合时，**全域水量平衡已能很好闭合**：绝大多数天 `|resid|` 小于 `0.17 mm`（`p95`），最差一天约 `3.0 mm`；全期累计误差约 `-7.2 mm`。
 
+（图）默认全期（1827 天）的全域残差时序（含累计残差）：
+
+![](figures/water_balance/basin_residual_full.png)
+
+（图）默认全期（1827 天）的 `|resid|` 分布（CDF）：
+
+![](figures/water_balance/basin_residual_abs_cdf_full.png)
+
 ### 6.2 逐 element 水量平衡结论
 
 单位：m（水深等效），统计的是 `|resid|` 的分布：
@@ -256,6 +274,10 @@ SHUD_WB_DIAG=1 SHUD_VALIDATION_END_DAYS=2 SHUD_VALIDATION_DT_QE_ET_MIN=60 \
 
 - 在该用例下（默认 `MAX_SOLVER_STEP=10 min`），逐 element 的 A 类残差 `p95≈0.10 mm`，B 类残差 `p95≈0.90 mm`，极端过程可达约 `1 cm`。  
 - `elewbfull_*` 与 `elewb3_*` 统计相同，表示雪/拦截（Snow/IS）过程与 `P / NetP / E_IC` 的记账已经自洽闭合（不会再把“全系统”拉出额外残差）。
+
+（图）逐 element `|resid|` 的分布（CDF；对比 A 类与 B 类、baseline 与 TSR）：
+
+![](figures/water_balance/element_residual_abs_cdf_full.png)
 
 ### 6.3 TSR 阴阳坡（南北坡）响应：Unsat / GW 差异（ccw，1827 天）
 
@@ -287,6 +309,10 @@ SHUD_WB_DIAG=1 SHUD_VALIDATION_END_DAYS=2 SHUD_VALIDATION_DT_QE_ET_MIN=60 \
 - 阴坡：`246` 个 element，面积占比 `0.213031`
 - 额外背景（面积加权）：阳坡平均高程 `906.915 m`，阴坡 `875.814 m`；两组平均含水层深度均为 `30 m`
 
+（图）坡向分组面积占比（含 flat 与其它坡向；用于解释“为何阳坡+阴坡+flat 不等于总单元数”）：
+
+![](figures/water_balance/aspect_group_area_fractions.png)
+
 #### 6.3.2 结果（面积加权 + 时间平均）
 
 下表的 `Δ` 均为 `阳坡 - 阴坡`。
@@ -300,6 +326,10 @@ TSR=ON 下的季节性差异（`Δ = 阳坡 - 阴坡`，按月分组：4–9 月
 
 - `rn_t`：全期 `Δ=64.2232 W/m²`；夏季均值 `38.6391 W/m²`；冬季均值 `89.8914 W/m²`
 - `ETa`：全期 `Δ=0.150583 mm/day`；夏季均值 `0.185505 mm/day`；冬季均值 `0.115545 mm/day`
+
+（图）南北坡差异随时间变化（baseline vs TSR；South−North）：
+
+![](figures/water_balance/aspect_delta_timeseries_full.png)
 
 #### 6.3.3 TSR 带来的“阴阳坡差异变化”（TSR=ON − TSR=OFF）
 
