@@ -11,6 +11,7 @@
 //#include "is_sm_et.hpp"
 #include "cvode_config.hpp"
 #include "Model_Data.hpp"
+#include "WaterBalanceDiag.hpp"
 #include "TimeSeriesData.hpp"
 #include "FloodAlert.hpp"
 #include "CommandIn.hpp"
@@ -66,6 +67,12 @@ double SHUD(FileIn *fin, FileOut *fout){
     MD->LoadIC();
     MD->SetIC2Y(udata);
     MD->initialize_output();
+    WaterBalanceDiag wbdiag(MD);
+    const char *shud_wb_diag = getenv("SHUD_WB_DIAG");
+    if (shud_wb_diag != nullptr && shud_wb_diag[0] != '\0' && strcmp(shud_wb_diag, "0") != 0) {
+        wbdiag.enable();
+        MD->wbdiag = &wbdiag;
+    }
     MD->PrintInit(fout->Init_bak, 0);
     MD->InitFloodAlert(fout->floodout);
     SetCVODE(mem, f, MD, udata, LS, sunctx);
@@ -100,6 +107,9 @@ double SHUD(FileIn *fin, FileOut *fout){
             MD->updateforcing(t);
             /* calculate Interception Storage */
             MD->ET(t, tout);
+            if (MD->wbdiag != nullptr) {
+                MD->wbdiag->onETUpdate();
+            }
             if (dummy_mode) {
                 t = tout; /* dummy mode only. */
             } else {
@@ -113,6 +123,21 @@ double SHUD(FileIn *fin, FileOut *fout){
         }
         //            CVODEstatus(mem, udata, t);
         MD->summary(udata);
+        if (MD->wbdiag != nullptr && !dummy_mode) {
+            // Ensure flux fields reflect the accepted solution at time t before sampling.
+            // (CVodeGetDky() uses dense output and does not refresh Model_Data flux arrays.)
+            f(t, udata, du, MD);
+            flag = CVodeGetDky(mem, t, 1, du);
+            check_flag(&flag, "CVodeGetDky", 1);
+#ifdef _OPENMP_ON
+            MD->wbdiag->sample(t, NV_DATA_OMP(du));
+#else
+            MD->wbdiag->sample(t, NV_DATA_S(du));
+#endif
+        }
+        if (MD->wbdiag != nullptr) {
+            MD->wbdiag->maybeWrite(t);
+        }
         MD->CS.ExportResults(t);
         MD->flood->FloodWarning(t);
     }

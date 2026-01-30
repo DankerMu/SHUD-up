@@ -23,6 +23,7 @@
 #include "Macros.hpp"
 #include "AccTemperature.hpp"
 using namespace std;
+class WaterBalanceDiag;
 class Model_Data {        /* Model_data definition */
 public:
     FileIn  *pf_in;
@@ -193,6 +194,9 @@ public:
     
     long ForcStartTime;
     TimeContext Time;
+
+    /* Optional water-balance diagnostics (enabled via env var SHUD_WB_DIAG=1) */
+    WaterBalanceDiag *wbdiag = nullptr;
     
 private:
     double *t_prcp;

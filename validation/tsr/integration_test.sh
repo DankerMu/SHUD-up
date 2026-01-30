@@ -9,16 +9,24 @@ need_cmd python3
 root="$(cd "${sd}/../.." && pwd)"
 report_path="${sd}/test_report.txt"
 
+# Keep integration test fast by default. Users can override these env vars if needed.
+export SHUD_VALIDATION_END_DAYS="${SHUD_VALIDATION_END_DAYS:-2}"
+export SHUD_VALIDATION_DT_QE_ET_MIN="${SHUD_VALIDATION_DT_QE_ET_MIN:-60}"
+
 {
   echo "TSR Integration Test Report"
   echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   echo "Repo root: ${root}"
+  echo "END days: ${SHUD_VALIDATION_END_DAYS}"
+  echo "DT_QE_ET min: ${SHUD_VALIDATION_DT_QE_ET_MIN}"
   echo
 } >"${report_path}"
 
-if ! baseline_out="$(bash "${sd}/run_baseline.sh" 2>&1)"; then
+if ! baseline_out="$(
+  (run_ccw_case 0 "output/ccw.base.itest" "validation/tsr/tmp/ccw.base.itest" "baseline-itest") 2>&1
+)"; then
   {
-    echo "Step: run_baseline.sh: FAIL"
+    echo "Step: baseline-itest: FAIL"
     echo "${baseline_out}"
     echo
     echo "RESULT: FAIL"
@@ -27,13 +35,15 @@ if ! baseline_out="$(bash "${sd}/run_baseline.sh" 2>&1)"; then
   exit 1
 fi
 {
-  echo "Step: run_baseline.sh: OK"
+  echo "Step: baseline-itest: OK"
   echo
 } >>"${report_path}"
 
-if ! tsr_out="$(bash "${sd}/run_tsr.sh" 2>&1)"; then
+if ! tsr_out="$(
+  (run_ccw_case 1 "output/ccw.tsr.itest" "validation/tsr/tmp/ccw.tsr.itest" "tsr-itest") 2>&1
+)"; then
   {
-    echo "Step: run_tsr.sh: FAIL"
+    echo "Step: tsr-itest: FAIL"
     echo "${tsr_out}"
     echo
     echo "RESULT: FAIL"
@@ -42,7 +52,7 @@ if ! tsr_out="$(bash "${sd}/run_tsr.sh" 2>&1)"; then
   exit 1
 fi
 {
-  echo "Step: run_tsr.sh: OK"
+  echo "Step: tsr-itest: OK"
   echo
 } >>"${report_path}"
 
@@ -233,8 +243,8 @@ report_path = Path(os.environ.get("SHUD_REPORT_PATH", root / "validation" / "tsr
 expected_end_days = int(os.environ.get("SHUD_VALIDATION_END_DAYS", "2"))
 expected_dt_min = float(os.environ.get("SHUD_VALIDATION_DT_QE_ET_MIN", "60"))
 
-base_dir = root / "output" / "ccw.base"
-tsr_dir = root / "output" / "ccw.tsr"
+base_dir = root / "output" / "ccw.base.itest"
+tsr_dir = root / "output" / "ccw.tsr.itest"
 
 
 def ensure_dir_nonempty(path: Path) -> None:

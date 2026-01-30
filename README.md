@@ -104,6 +104,8 @@ Generate TSR=ON outputs for `ccw`:
 
 ```bash
 bash validation/tsr/run_tsr.sh
+# For a faster short run (override END / DT_QE_ET):
+# SHUD_VALIDATION_END_DAYS=2 SHUD_VALIDATION_DT_QE_ET_MIN=60 bash validation/tsr/run_tsr.sh
 ```
 
 Recompute TSR factor + `rn_t` in Python (C++-consistent) and compare pointwise:

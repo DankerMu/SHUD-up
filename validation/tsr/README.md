@@ -34,16 +34,17 @@ bash validation/tsr/integration_test.sh
 
 ## 可调参数（环境变量）
 
-默认为了验证速度，会在输入工作副本中写入/覆盖以下参数：
-- `END`（默认 `2` 天）
-- `DT_QE_ET`（默认 `60` 分钟；`rn_h/rn_t/rn_factor` 输出频率绑定在 `DT_QE_ET`）
-- `TERRAIN_RADIATION`（baseline=0 / tsr=1）
+默认行为：
+- 复制 `input/ccw` 到 `validation/tsr/tmp/...` 后，**保持** `ccw.cfg.para` 里的 `END` / `DT_QE_ET` 原值（即 `input/ccw/ccw.cfg.para` 的值）
+- 仅修改 `TERRAIN_RADIATION`（baseline=0 / tsr=1）
 
-可通过环境变量覆盖默认值：
+可选：为了加速验证，可通过环境变量覆盖（输出频率绑定在 `DT_QE_ET`）：
 
 ```bash
 SHUD_VALIDATION_END_DAYS=2 SHUD_VALIDATION_DT_QE_ET_MIN=60 bash validation/tsr/run_tsr.sh
 ```
+
+`integration_test.sh` 也会继承同样的环境变量；需要加速时可在运行前 `export` 这两个变量。
 
 ## 输出位置
 

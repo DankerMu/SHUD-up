@@ -100,6 +100,24 @@ upsert_cfg_kv() {
   mv "$tmp" "$file"
 }
 
+get_cfg_kv() {
+  local file="$1"
+  local key="$2"
+  awk -v key="$key" '
+    BEGIN{IGNORECASE=1}
+    /^[[:space:]]*#/ {next}
+    /^[[:space:]]*$/ {next}
+    {
+      k=$1
+      v=$2
+      if (toupper(k)==toupper(key)) {
+        print v
+        exit
+      }
+    }
+  ' "$file"
+}
+
 set_forcing_csv_basepath() {
   local forc_list="$1"
   local new_path="$2"
@@ -164,10 +182,14 @@ run_ccw_case() {
   [[ -f "$cfg" ]] || die "missing cfg.para in tmp copy: $cfg"
   [[ -f "$forc" ]] || die "missing tsd.forc in tmp copy: $forc"
 
-  local end_days="${SHUD_VALIDATION_END_DAYS:-2}"
-  local dt_qe_et_min="${SHUD_VALIDATION_DT_QE_ET_MIN:-60}"
-  upsert_cfg_kv "$cfg" "END" "${end_days}"
-  upsert_cfg_kv "$cfg" "DT_QE_ET" "${dt_qe_et_min}"
+  # Default: keep values from input/ccw/ccw.cfg.para (copied into tmp_dir).
+  # Optional overrides for fast validation:
+  if [[ -n "${SHUD_VALIDATION_END_DAYS:-}" ]]; then
+    upsert_cfg_kv "$cfg" "END" "${SHUD_VALIDATION_END_DAYS}"
+  fi
+  if [[ -n "${SHUD_VALIDATION_DT_QE_ET_MIN:-}" ]]; then
+    upsert_cfg_kv "$cfg" "DT_QE_ET" "${SHUD_VALIDATION_DT_QE_ET_MIN}"
+  fi
   upsert_cfg_kv "$cfg" "TERRAIN_RADIATION" "${tsr_flag}"
 
   set_forcing_csv_basepath "$forc" "./${tmp_rel}"
@@ -175,7 +197,11 @@ run_ccw_case() {
   local project_file="${tmp_dir}/ccw.SHUD"
   write_ccw_project_file "$project_file" "./${tmp_rel}" "./${out_rel}"
 
-  info "running ${label}: TSR=${tsr_flag}, END=${end_days} day(s), DT_QE_ET=${dt_qe_et_min} min"
+  local end_days
+  local dt_qe_et_min
+  end_days="$(get_cfg_kv "$cfg" "END")"
+  dt_qe_et_min="$(get_cfg_kv "$cfg" "DT_QE_ET")"
+  info "running ${label}: TSR=${tsr_flag}, END=${end_days:-?} day(s), DT_QE_ET=${dt_qe_et_min:-?} min"
   (
     cd "$root"
     "${shud_bin}" -p "${project_file}" >"${out_dir}/run.log" 2>&1

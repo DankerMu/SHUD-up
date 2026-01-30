@@ -185,8 +185,8 @@ void Model_Data::ET(double t, double tnext){
         
         /* Interception */
         LAI = t_lai[i];
-        icStg = yEleIS[i];
         vgFrac = Ele[i].VegFrac;
+        icStg = (vgFrac > ZERO) ? (yEleIS[i] / vgFrac) : 0.0;
         if(LAI > ZERO){
             icMax = gc.cISmax * IC_MAX * LAI;
             icAcc = min(prcp - snAcc, max(0., (icMax - icStg) / DT_min) );
