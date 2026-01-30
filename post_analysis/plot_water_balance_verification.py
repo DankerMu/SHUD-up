@@ -459,8 +459,8 @@ def plot_aspect_storage_delta_timeseries(
     fig, axes = plt.subplots(3, 1, figsize=(10.5, 8.6), sharex=True)
 
     ax = axes[0]
-    ax.plot(day_b, du_b, lw=0.9, label="Baseline (TSR=OFF)")
     ax.plot(day_t, du_t, lw=0.9, label="TSR=ON")
+    ax.plot(day_b, du_b, lw=1.0, ls="--", label="Baseline (TSR=OFF)")
     ax.plot(day_t, du_eff, lw=0.8, color="k", alpha=0.6, label="TSR effect (ΔTSR−ΔBASE)")
     ax.axhline(0.0, color="k", lw=0.7, alpha=0.4)
     ax.set_ylabel("Δ yUnsat (m)\nSouth−North")
@@ -468,19 +468,32 @@ def plot_aspect_storage_delta_timeseries(
     ax.legend(loc="upper right", frameon=True, fontsize=9)
 
     ax = axes[1]
-    ax.plot(day_b, dr_b, lw=0.9, label="Baseline (TSR=OFF)")
     ax.plot(day_t, dr_t, lw=0.9, label="TSR=ON")
+    ax.plot(day_b, dr_b, lw=1.0, ls="--", label="Baseline (TSR=OFF)")
     ax.plot(day_t, dr_eff, lw=0.8, color="k", alpha=0.6, label="TSR effect (ΔTSR−ΔBASE)")
     ax.axhline(0.0, color="k", lw=0.7, alpha=0.4)
     ax.set_ylabel("Δ UnsatRatio (-)\nSouth−North")
 
     ax = axes[2]
-    ax.plot(day_b, dg_b, lw=0.9, label="Baseline (TSR=OFF)")
+    # ΔyGW is O(0.1m) but TSR effect (difference-of-differences) is O(1e-4m).
+    # Plot ΔyGW on the left axis and TSR effect on a right axis (mm) so neither becomes visually invisible.
     ax.plot(day_t, dg_t, lw=0.9, label="TSR=ON")
-    ax.plot(day_t, dg_eff, lw=0.8, color="k", alpha=0.6, label="TSR effect (ΔTSR−ΔBASE)")
-    ax.axhline(0.0, color="k", lw=0.7, alpha=0.4)
+    ax.plot(day_b, dg_b, lw=1.0, ls="--", label="Baseline (TSR=OFF)")
     ax.set_xlabel("Day index (left endpoint)")
     ax.set_ylabel("Δ yGW (m)\nSouth−North")
+    axr = ax.twinx()
+    axr.plot(day_t, dg_eff * 1000.0, lw=0.9, color="k", alpha=0.6, label="TSR effect (ΔTSR−ΔBASE)")
+    axr.axhline(0.0, color="k", lw=0.7, alpha=0.4)
+    axr.set_ylabel("TSR effect on ΔyGW (mm)\n(ΔTSR−ΔBASE)")
+    # Reasonable visibility window; auto-scale but keep a minimum range.
+    eff_mm = dg_eff * 1000.0
+    eff_max = float(np.nanmax(np.abs(eff_mm))) if eff_mm.size else 0.0
+    y = max(1.0, eff_max * 1.25)
+    axr.set_ylim(-y, y)
+    # Combine legends from left and right axes (so baseline is always visible in legend).
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = axr.get_legend_handles_labels()
+    ax.legend(h1 + h2, l1 + l2, loc="upper right", frameon=True, fontsize=9)
 
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
