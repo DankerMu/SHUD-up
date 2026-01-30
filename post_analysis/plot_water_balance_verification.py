@@ -92,6 +92,52 @@ def _read_mesh_areas(mesh_path: Path) -> np.ndarray:
     return areas
 
 
+def _read_mesh_geom(mesh_path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return (areas, aq_depth_ele).
+    - areas: element triangle area (m^2)
+    - aq_depth_ele: element-mean aquifer depth (m), averaged from node AqDepth
+    """
+    lines = mesh_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if not lines:
+        raise PlotError(f"empty mesh file: {mesh_path}")
+    num_ele = int(lines[0].split()[0])
+
+    elements: list[tuple[int, int, int, int]] = []
+    for k in range(num_ele):
+        cols = lines[2 + k].split()
+        if len(cols) < 4:
+            raise PlotError(f"invalid element row in {mesh_path}: {lines[2+k]!r}")
+        elements.append((int(cols[0]), int(cols[1]), int(cols[2]), int(cols[3])))
+
+    node_hdr_idx = 2 + num_ele
+    num_node = int(lines[node_hdr_idx].split()[0])
+    node_start = node_hdr_idx + 2
+
+    x = np.zeros(num_node + 1)
+    y = np.zeros(num_node + 1)
+    aqd = np.zeros(num_node + 1)
+    for k in range(num_node):
+        cols = lines[node_start + k].split()
+        if len(cols) < 4:
+            raise PlotError(f"invalid node row in {mesh_path}: {lines[node_start+k]!r}")
+        nid = int(cols[0])
+        x[nid] = float(cols[1])
+        y[nid] = float(cols[2])
+        aqd[nid] = float(cols[3])
+
+    areas = np.zeros(num_ele)
+    aqd_ele = np.zeros(num_ele)
+    for eid, n1, n2, n3 in elements:
+        x1, y1 = x[n1], y[n1]
+        x2, y2 = x[n2], y[n2]
+        x3, y3 = x[n3], y[n3]
+        areas[eid - 1] = 0.5 * abs((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1))
+        aqd_ele[eid - 1] = (aqd[n1] + aqd[n2] + aqd[n3]) / 3.0
+
+    return areas, aqd_ele
+
+
 def _compute_aspect_slope(normals: Dict[int, Tuple[float, float, float]]) -> tuple[np.ndarray, np.ndarray]:
     n = len(normals)
     nx = np.zeros(n)
@@ -359,6 +405,89 @@ def plot_aspect_delta_timeseries(
     plt.close(fig)
 
 
+def plot_aspect_storage_delta_timeseries(
+    *,
+    out_base: Path,
+    out_tsr: Path,
+    mesh_path: Path,
+    slope_deg_min: float,
+    aspect_halfwidth_deg: float,
+    out_path: Path,
+    title: str,
+) -> None:
+    areas, aqd_ele = _read_mesh_geom(mesh_path)
+    g = build_aspect_groups(
+        mesh_path=mesh_path, slope_deg_min=slope_deg_min, aspect_halfwidth_deg=aspect_halfwidth_deg
+    )
+
+    def delta_series(out_dir: Path, dat_name: str) -> tuple[np.ndarray, np.ndarray]:
+        t_min, vals, _ = _read_matrix_fast(out_dir / dat_name)
+        south = _aw_mean_series(vals, areas=g.areas, mask=g.mask_south)
+        north = _aw_mean_series(vals, areas=g.areas, mask=g.mask_north)
+        day = t_min / 1440.0
+        return day, (south - north)
+
+    def delta_unsat_ratio(out_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+        t_min, uns, _ = _read_matrix_fast(out_dir / "ccw.eleyunsat.dat")
+        _, gw, _ = _read_matrix_fast(out_dir / "ccw.eleygw.dat")
+        deficit = aqd_ele.reshape((1, -1)) - gw
+        ratio = np.where(deficit > 1e-12, uns / deficit, np.nan)
+        # area-weighted mean ignoring NaNs
+        def wmean(mask: np.ndarray) -> np.ndarray:
+            m = mask.reshape((1, -1)) & np.isfinite(ratio)
+            w = areas.reshape((1, -1)) * m.astype(float)
+            ws = w.sum(axis=1)
+            return (ratio * w).sum(axis=1) / ws
+
+        south = wmean(g.mask_south)
+        north = wmean(g.mask_north)
+        day = t_min / 1440.0
+        return day, (south - north)
+
+    day_b, du_b = delta_series(out_base, "ccw.eleyunsat.dat")
+    day_t, du_t = delta_series(out_tsr, "ccw.eleyunsat.dat")
+    _, dg_b = delta_series(out_base, "ccw.eleygw.dat")
+    _, dg_t = delta_series(out_tsr, "ccw.eleygw.dat")
+    _, dr_b = delta_unsat_ratio(out_base)
+    _, dr_t = delta_unsat_ratio(out_tsr)
+
+    # TSR effect on contrast (difference-of-differences)
+    du_eff = du_t - du_b
+    dr_eff = dr_t - dr_b
+    dg_eff = dg_t - dg_b
+
+    fig, axes = plt.subplots(3, 1, figsize=(10.5, 8.6), sharex=True)
+
+    ax = axes[0]
+    ax.plot(day_b, du_b, lw=0.9, label="Baseline (TSR=OFF)")
+    ax.plot(day_t, du_t, lw=0.9, label="TSR=ON")
+    ax.plot(day_t, du_eff, lw=0.8, color="k", alpha=0.6, label="TSR effect (ΔTSR−ΔBASE)")
+    ax.axhline(0.0, color="k", lw=0.7, alpha=0.4)
+    ax.set_ylabel("Δ yUnsat (m)\nSouth−North")
+    ax.set_title(title)
+    ax.legend(loc="upper right", frameon=True, fontsize=9)
+
+    ax = axes[1]
+    ax.plot(day_b, dr_b, lw=0.9, label="Baseline (TSR=OFF)")
+    ax.plot(day_t, dr_t, lw=0.9, label="TSR=ON")
+    ax.plot(day_t, dr_eff, lw=0.8, color="k", alpha=0.6, label="TSR effect (ΔTSR−ΔBASE)")
+    ax.axhline(0.0, color="k", lw=0.7, alpha=0.4)
+    ax.set_ylabel("Δ UnsatRatio (-)\nSouth−North")
+
+    ax = axes[2]
+    ax.plot(day_b, dg_b, lw=0.9, label="Baseline (TSR=OFF)")
+    ax.plot(day_t, dg_t, lw=0.9, label="TSR=ON")
+    ax.plot(day_t, dg_eff, lw=0.8, color="k", alpha=0.6, label="TSR effect (ΔTSR−ΔBASE)")
+    ax.axhline(0.0, color="k", lw=0.7, alpha=0.4)
+    ax.set_xlabel("Day index (left endpoint)")
+    ax.set_ylabel("Δ yGW (m)\nSouth−North")
+
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=160)
+    plt.close(fig)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generate plots for docs/water_balance_verification.md")
     ap.add_argument("--mesh", type=Path, default=Path("input/ccw/ccw.sp.mesh"))
@@ -425,6 +554,15 @@ def main() -> int:
         out_path=args.outdir / "aspect_delta_timeseries_full.png",
         title="Aspect response (South−North) time series (full run)",
     )
+    plot_aspect_storage_delta_timeseries(
+        out_base=args.base,
+        out_tsr=args.tsr,
+        mesh_path=args.mesh,
+        slope_deg_min=args.slope_deg_min,
+        aspect_halfwidth_deg=args.aspect_halfwidth_deg,
+        out_path=args.outdir / "aspect_storage_delta_timeseries_full.png",
+        title="Aspect storage response (South−North) time series (full run)",
+    )
 
     print(f"OK: wrote figures under {args.outdir}")
     return 0
@@ -432,4 +570,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

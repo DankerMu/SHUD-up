@@ -331,6 +331,10 @@ TSR=ON 下的季节性差异（`Δ = 阳坡 - 阴坡`，按月分组：4–9 月
 
 ![](figures/water_balance/aspect_delta_timeseries_full.png)
 
+（图）南北坡水量状态差异随时间变化（yUnsat / UnsatRatio / yGW；并显示 TSR 对“南北差异”的净效应 ΔTSR−ΔBASE）：
+
+![](figures/water_balance/aspect_storage_delta_timeseries_full.png)
+
 #### 6.3.3 TSR 带来的“阴阳坡差异变化”（TSR=ON − TSR=OFF）
 
 对比两组的均值变化（`TSR − OFF`）：
