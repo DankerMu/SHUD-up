@@ -25,11 +25,17 @@ rAnalysis/test.R
 *.*.swp
 *.DS_Store
 
+# Local editor settings
+.obsidian/
+
 # Validation harness artifacts
 validation/tsr/tmp/
 
 # Allow committing validation scripts (this repo ignores *.sh by default)
 !validation/**/*.sh
+
+# Local generated docs (keep markdown as source of truth)
+docs/water_balance_verification.pdf
 
 # Python coverage artifacts
 .coverage
@@ -39,3 +45,7 @@ coverage.xml
 # Local validation backups
 *.bak_phase_test
 *.bak_tsr_test
+
+# Local-only docs/analysis (do not push)
+docs/
+post_analysis/
