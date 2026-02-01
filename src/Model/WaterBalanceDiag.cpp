@@ -56,6 +56,19 @@ int WaterBalanceDiag::isEnabled() const
     return enabled;
 }
 
+int WaterBalanceDiag::quadEnabled() const
+{
+    return quad_enabled;
+}
+
+const double *WaterBalanceDiag::icRawData() const
+{
+    if ((int)ic_raw.size() != (md != nullptr ? md->NumEle : -1)) {
+        return nullptr;
+    }
+    return ic_raw.data();
+}
+
 std::string WaterBalanceDiag::outputPrefix() const
 {
     if (md == nullptr || md->pf_out == nullptr) {
@@ -254,6 +267,9 @@ void WaterBalanceDiag::openFiles()
         return;
     }
 
+    use_trapz = env_truthy(getenv("SHUD_WB_DIAG_TRAPZ"));
+    quad_enabled = env_truthy(getenv("SHUD_WB_DIAG_QUAD"));
+
     const int n = md->NumEle;
     interval_min = choose_interval_min(md->CS);
 
@@ -262,6 +278,10 @@ void WaterBalanceDiag::openFiles()
     fluxfull_acc.assign((size_t)n, 0.0);
     budget3_acc.assign((size_t)n, 0.0);
     budgetfull_acc.assign((size_t)n, 0.0);
+    flux3_rate_prev.assign((size_t)n, 0.0);
+    fluxfull_rate_prev.assign((size_t)n, 0.0);
+    budget3_rate_prev.assign((size_t)n, 0.0);
+    budgetfull_rate_prev.assign((size_t)n, 0.0);
     s3_prev.assign((size_t)n, 0.0);
     sfull_prev.assign((size_t)n, 0.0);
     resid3.assign((size_t)n, 0.0);
@@ -292,6 +312,7 @@ void WaterBalanceDiag::openFiles()
     const std::string f3b = prefix + ".elewb3_budget_resid.dat";
     const std::string ffullb = prefix + ".elewbfull_budget_resid.dat";
     const std::string fbasin = prefix + ".basinwbfull.dat";
+    const std::string fbasin_quad = prefix + ".basinwbfull_quad.dat";
     fp3 = fopen(f3.c_str(), "wb");
     CheckFile(fp3, f3.c_str());
     fpfull = fopen(ffull.c_str(), "wb");
@@ -302,12 +323,19 @@ void WaterBalanceDiag::openFiles()
     CheckFile(fpfull_budget, ffullb.c_str());
     fpbasin = fopen(fbasin.c_str(), "wb");
     CheckFile(fpbasin, fbasin.c_str());
+    if (quad_enabled) {
+        fpbasin_quad = fopen(fbasin_quad.c_str(), "wb");
+        CheckFile(fpbasin_quad, fbasin_quad.c_str());
+    }
 
     writeDatHeader(fp3, "elewb3_resid", md->NumEle, icol);
     writeDatHeader(fpfull, "elewbfull_resid", md->NumEle, icol);
     writeDatHeader(fp3_budget, "elewb3_budget_resid", md->NumEle, icol);
     writeDatHeader(fpfull_budget, "elewbfull_budget_resid", md->NumEle, icol);
     writeDatHeader(fpbasin, "basinwbfull (m3)", 9, basin_icol);
+    if (fpbasin_quad != nullptr) {
+        writeDatHeader(fpbasin_quad, "basinwbfull_quad (m3)", 9, basin_icol);
+    }
 
     initBasinOutlets();
     basin_s_ele_prev_m3 = basinElementStorageFull_m3();
@@ -319,6 +347,21 @@ void WaterBalanceDiag::openFiles()
     basin_qbc_acc_m3 = 0.0;
     basin_qss_acc_m3 = 0.0;
     basin_noncons_edge_acc_m3 = 0.0;
+    basin_p_rate_prev_m3min = 0.0;
+    basin_et_rate_prev_m3min = 0.0;
+    basin_qout_rate_prev_m3min = 0.0;
+    basin_qedge_rate_prev_m3min = 0.0;
+    basin_qbc_rate_prev_m3min = 0.0;
+    basin_qss_rate_prev_m3min = 0.0;
+    basin_noncons_edge_rate_prev_m3min = 0.0;
+    has_prev_rate = 0;
+
+    quad_rates_m3min.assign((size_t)kQuadN, 0.0);
+    quad_rates_t = -1.0;
+    quad_acc_m3.assign((size_t)kQuadN, 0.0);
+    quad_rate_prev_m3min.assign((size_t)kQuadN, 0.0);
+    quad_last_t = md->CS.StartTime;
+    quad_has_prev_rate = 0;
 
     last_t = md->CS.StartTime;
     has_prev = 1;
@@ -346,6 +389,10 @@ void WaterBalanceDiag::closeFiles()
     if (fpbasin != nullptr) {
         fclose(fpbasin);
         fpbasin = nullptr;
+    }
+    if (fpbasin_quad != nullptr) {
+        fclose(fpbasin_quad);
+        fpbasin_quad = nullptr;
     }
 }
 
@@ -385,9 +432,14 @@ void WaterBalanceDiag::sample(double t_min, const double *DY)
         const double net3 = DY[isf] + sy * DY[ius] + sy * DY[igw];
         const double netfull = net3 + (md->qElePrep[i] - md->qEleNetPrep[i]) - ic_raw[(size_t)i];
 
-        /* Backward Euler integration on accepted solution samples */
-        flux3_acc[(size_t)i] += net3 * dt_min;
-        fluxfull_acc[(size_t)i] += netfull * dt_min;
+        if (use_trapz && has_prev_rate) {
+            flux3_acc[(size_t)i] += 0.5 * (flux3_rate_prev[(size_t)i] + net3) * dt_min;
+            fluxfull_acc[(size_t)i] += 0.5 * (fluxfull_rate_prev[(size_t)i] + netfull) * dt_min;
+        } else {
+            /* Backward Euler integration on accepted solution samples */
+            flux3_acc[(size_t)i] += net3 * dt_min;
+            fluxfull_acc[(size_t)i] += netfull * dt_min;
+        }
 
         const double et3 = md->qEs[i] + md->qEu[i] + md->qEg[i] + md->qTu[i] + md->qTg[i];
         const double qlat3 = (md->QeleSurfTot[i] + md->QeleSubTot[i]) / area;
@@ -396,8 +448,18 @@ void WaterBalanceDiag::sample(double t_min, const double *DY)
 
         const double net3_budget = md->qEleNetPrep[i] - et3 - qlat3 + qbc + qss;
         const double netfull_budget = md->qElePrep[i] - (ic_raw[(size_t)i] + et3) - qlat3 + qbc + qss;
-        budget3_acc[(size_t)i] += net3_budget * dt_min;
-        budgetfull_acc[(size_t)i] += netfull_budget * dt_min;
+        if (use_trapz && has_prev_rate) {
+            budget3_acc[(size_t)i] += 0.5 * (budget3_rate_prev[(size_t)i] + net3_budget) * dt_min;
+            budgetfull_acc[(size_t)i] += 0.5 * (budgetfull_rate_prev[(size_t)i] + netfull_budget) * dt_min;
+        } else {
+            budget3_acc[(size_t)i] += net3_budget * dt_min;
+            budgetfull_acc[(size_t)i] += netfull_budget * dt_min;
+        }
+
+        flux3_rate_prev[(size_t)i] = net3;
+        fluxfull_rate_prev[(size_t)i] = netfull;
+        budget3_rate_prev[(size_t)i] = net3_budget;
+        budgetfull_rate_prev[(size_t)i] = netfull_budget;
     }
 
     {
@@ -434,15 +496,35 @@ void WaterBalanceDiag::sample(double t_min, const double *DY)
         const double qout_rate_m3min = basinOutletDischarge_m3min();
         const double qedge_rate_m3min = basinBoundaryEdgeOutflow_m3min();
 
-        basin_p_acc_m3 += p_rate_m3min * dt_min;
-        basin_et_acc_m3 += et_rate_m3min * dt_min;
-        basin_qout_acc_m3 += qout_rate_m3min * dt_min;
-        basin_qedge_acc_m3 += qedge_rate_m3min * dt_min;
-        basin_qbc_acc_m3 += qbc_rate_m3min * dt_min;
-        basin_qss_acc_m3 += qss_rate_m3min * dt_min;
-        basin_noncons_edge_acc_m3 += noncons_edge_rate_m3min * dt_min;
+        if (use_trapz && has_prev_rate) {
+            basin_p_acc_m3 += 0.5 * (basin_p_rate_prev_m3min + p_rate_m3min) * dt_min;
+            basin_et_acc_m3 += 0.5 * (basin_et_rate_prev_m3min + et_rate_m3min) * dt_min;
+            basin_qout_acc_m3 += 0.5 * (basin_qout_rate_prev_m3min + qout_rate_m3min) * dt_min;
+            basin_qedge_acc_m3 += 0.5 * (basin_qedge_rate_prev_m3min + qedge_rate_m3min) * dt_min;
+            basin_qbc_acc_m3 += 0.5 * (basin_qbc_rate_prev_m3min + qbc_rate_m3min) * dt_min;
+            basin_qss_acc_m3 += 0.5 * (basin_qss_rate_prev_m3min + qss_rate_m3min) * dt_min;
+            basin_noncons_edge_acc_m3 +=
+                0.5 * (basin_noncons_edge_rate_prev_m3min + noncons_edge_rate_m3min) * dt_min;
+        } else {
+            basin_p_acc_m3 += p_rate_m3min * dt_min;
+            basin_et_acc_m3 += et_rate_m3min * dt_min;
+            basin_qout_acc_m3 += qout_rate_m3min * dt_min;
+            basin_qedge_acc_m3 += qedge_rate_m3min * dt_min;
+            basin_qbc_acc_m3 += qbc_rate_m3min * dt_min;
+            basin_qss_acc_m3 += qss_rate_m3min * dt_min;
+            basin_noncons_edge_acc_m3 += noncons_edge_rate_m3min * dt_min;
+        }
+
+        basin_p_rate_prev_m3min = p_rate_m3min;
+        basin_et_rate_prev_m3min = et_rate_m3min;
+        basin_qout_rate_prev_m3min = qout_rate_m3min;
+        basin_qedge_rate_prev_m3min = qedge_rate_m3min;
+        basin_qbc_rate_prev_m3min = qbc_rate_m3min;
+        basin_qss_rate_prev_m3min = qss_rate_m3min;
+        basin_noncons_edge_rate_prev_m3min = noncons_edge_rate_m3min;
     }
 
+    has_prev_rate = 1;
     last_t = t_min;
 }
 
@@ -512,6 +594,34 @@ void WaterBalanceDiag::maybeWrite(double t_min)
     basin_values[8] = resid_m3;
     writeDatRecord(fpbasin, t_quantized, 9, basin_values);
 
+    if (fpbasin_quad != nullptr && (int)quad_acc_m3.size() == kQuadN) {
+        const double p_int = quad_acc_m3[0];
+        const double et_int = quad_acc_m3[1];
+        const double qout_int = quad_acc_m3[2];
+        const double qedge_int = quad_acc_m3[3];
+        const double qbc_int = quad_acc_m3[4];
+        const double qss_int = quad_acc_m3[5];
+        const double noncons_int = quad_acc_m3[6];
+
+        const double net_in_minus_out_int = p_int + qbc_int + qss_int - et_int - qout_int - qedge_int;
+        const double resid_int_m3 = ds_total_m3 - net_in_minus_out_int;
+
+        basin_values[0] = ds_total_m3;
+        basin_values[1] = p_int;
+        basin_values[2] = et_int;
+        basin_values[3] = qout_int;
+        basin_values[4] = qedge_int;
+        basin_values[5] = qbc_int;
+        basin_values[6] = qss_int;
+        basin_values[7] = noncons_int;
+        basin_values[8] = resid_int_m3;
+        writeDatRecord(fpbasin_quad, t_quantized, 9, basin_values);
+
+        for (int i = 0; i < kQuadN; i++) {
+            quad_acc_m3[(size_t)i] = 0.0;
+        }
+    }
+
     basin_s_ele_prev_m3 = s_ele_m3;
     basin_s_riv_prev_m3 = s_riv_m3;
     basin_p_acc_m3 = 0.0;
@@ -523,4 +633,85 @@ void WaterBalanceDiag::maybeWrite(double t_min)
     basin_noncons_edge_acc_m3 = 0.0;
 
     last_written_floor = t_floor;
+}
+
+void WaterBalanceDiag::updateQuadRates(double t_min,
+                                      double p_rate_m3min,
+                                      double et_rate_m3min,
+                                      double qout_rate_m3min,
+                                      double qedge_rate_m3min,
+                                      double qbc_rate_m3min,
+                                      double qss_rate_m3min,
+                                      double noncons_edge_rate_m3min)
+{
+    if (!enabled || !quad_enabled) {
+        return;
+    }
+    quad_rates_t = t_min;
+    if ((int)quad_rates_m3min.size() != kQuadN) {
+        quad_rates_m3min.assign((size_t)kQuadN, 0.0);
+    }
+    quad_rates_m3min[0] = p_rate_m3min;
+    quad_rates_m3min[1] = et_rate_m3min;
+    quad_rates_m3min[2] = qout_rate_m3min;
+    quad_rates_m3min[3] = qedge_rate_m3min;
+    quad_rates_m3min[4] = qbc_rate_m3min;
+    quad_rates_m3min[5] = qss_rate_m3min;
+    quad_rates_m3min[6] = noncons_edge_rate_m3min;
+}
+
+int WaterBalanceDiag::getQuadRates(double t_min, double *out_rates_m3min, int n) const
+{
+    if (!enabled || !quad_enabled || out_rates_m3min == nullptr) {
+        return 1;
+    }
+    if (n < kQuadN) {
+        return 2;
+    }
+    (void)t_min; /* best-effort: CVODE typically calls fQ at the same t as f */
+    if ((int)quad_rates_m3min.size() != kQuadN) {
+        return 3;
+    }
+    for (int i = 0; i < kQuadN; i++) {
+        out_rates_m3min[i] = quad_rates_m3min[(size_t)i];
+    }
+    return 0;
+}
+
+void WaterBalanceDiag::onCvodeMonitorStep(double t_min)
+{
+    if (!enabled || !quad_enabled) {
+        return;
+    }
+    if ((int)quad_acc_m3.size() != kQuadN || (int)quad_rate_prev_m3min.size() != kQuadN) {
+        return;
+    }
+
+    const double dt_min = t_min - quad_last_t;
+    if (!(dt_min > 0.0)) {
+        quad_last_t = t_min;
+        return;
+    }
+
+    double rates_m3min[kQuadN];
+    if (getQuadRates(t_min, rates_m3min, kQuadN) != 0) {
+        quad_last_t = t_min;
+        return;
+    }
+
+    if (quad_has_prev_rate) {
+        for (int i = 0; i < kQuadN; i++) {
+            quad_acc_m3[(size_t)i] += 0.5 * (quad_rate_prev_m3min[(size_t)i] + rates_m3min[i]) * dt_min;
+        }
+    } else {
+        for (int i = 0; i < kQuadN; i++) {
+            quad_acc_m3[(size_t)i] += rates_m3min[i] * dt_min;
+        }
+        quad_has_prev_rate = 1;
+    }
+
+    for (int i = 0; i < kQuadN; i++) {
+        quad_rate_prev_m3min[(size_t)i] = rates_m3min[i];
+    }
+    quad_last_t = t_min;
 }

@@ -17,14 +17,29 @@ public:
 
     void enable();
     int isEnabled() const;
+    int quadEnabled() const;
 
     void onETUpdate();
     void sample(double t_min, const double *DY);
     void maybeWrite(double t_min);
 
+    const double *icRawData() const;
+
+    void updateQuadRates(double t_min,
+                         double p_rate_m3min,
+                         double et_rate_m3min,
+                         double qout_rate_m3min,
+                         double qedge_rate_m3min,
+                         double qbc_rate_m3min,
+                         double qss_rate_m3min,
+                         double noncons_edge_rate_m3min);
+    int getQuadRates(double t_min, double *out_rates_m3min, int n) const;
+    void onCvodeMonitorStep(double t_min);
+
 private:
     Model_Data *md = nullptr;
     int enabled = 0;
+    int quad_enabled = 0;
 
     int interval_min = 0;
     double last_t = 0.0;
@@ -38,6 +53,14 @@ private:
 
     std::vector<double> budget3_acc;
     std::vector<double> budgetfull_acc;
+
+    /* Optional trapezoidal integration support */
+    int use_trapz = 0;
+    int has_prev_rate = 0;
+    std::vector<double> flux3_rate_prev;
+    std::vector<double> fluxfull_rate_prev;
+    std::vector<double> budget3_rate_prev;
+    std::vector<double> budgetfull_rate_prev;
 
     std::vector<double> s3_prev;
     std::vector<double> sfull_prev;
@@ -53,6 +76,7 @@ private:
     FILE *fp3_budget = nullptr;
     FILE *fpfull_budget = nullptr;
     FILE *fpbasin = nullptr;
+    FILE *fpbasin_quad = nullptr;
 
     std::vector<int> outlet_riv_idx;
 
@@ -69,6 +93,23 @@ private:
     double basin_qbc_acc_m3 = 0.0;
     double basin_qss_acc_m3 = 0.0;
     double basin_noncons_edge_acc_m3 = 0.0;
+
+    double basin_p_rate_prev_m3min = 0.0;
+    double basin_et_rate_prev_m3min = 0.0;
+    double basin_qout_rate_prev_m3min = 0.0;
+    double basin_qedge_rate_prev_m3min = 0.0;
+    double basin_qbc_rate_prev_m3min = 0.0;
+    double basin_qss_rate_prev_m3min = 0.0;
+    double basin_noncons_edge_rate_prev_m3min = 0.0;
+
+    /* CVODE internal-step monitoring (basin) support */
+    static constexpr int kQuadN = 7;
+    std::vector<double> quad_rates_m3min;
+    double quad_rates_t = -1.0;
+    std::vector<double> quad_acc_m3;
+    std::vector<double> quad_rate_prev_m3min;
+    double quad_last_t = 0.0;
+    int quad_has_prev_rate = 0;
 
     void openFiles();
     void closeFiles();

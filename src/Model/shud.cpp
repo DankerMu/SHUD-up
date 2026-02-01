@@ -113,12 +113,24 @@ double SHUD(FileIn *fin, FileOut *fout){
             if (dummy_mode) {
                 t = tout; /* dummy mode only. */
             } else {
-                if (etSubstepEnabled) {
+                const bool wbdiagOneStepEnabled = (MD->wbdiag != nullptr && MD->wbdiag->quadEnabled());
+                if (etSubstepEnabled || wbdiagOneStepEnabled) {
                     flag = CVodeSetStopTime(mem, tout);
                     check_flag(&flag, "CVodeSetStopTime", 1);
                 }
-                flag = CVode(mem, tout, udata, &t, CV_NORMAL);
-                check_flag(&flag, "CVode", 1);
+                if (wbdiagOneStepEnabled) {
+                    /* Run CVODE in internal-step mode so we can integrate basin fluxes at the solver's adaptive dt. */
+                    while (t + ZERO < tout) {
+                        flag = CVode(mem, tout, udata, &t, CV_ONE_STEP);
+                        check_flag(&flag, "CVode", 1);
+                        /* Refresh flux fields on the accepted solution and accumulate "quad" integrals. */
+                        f(t, udata, du, MD);
+                        MD->wbdiag->onCvodeMonitorStep(t);
+                    }
+                } else {
+                    flag = CVode(mem, tout, udata, &t, CV_NORMAL);
+                    check_flag(&flag, "CVode", 1);
+                }
             }
         }
         //            CVODEstatus(mem, udata, t);

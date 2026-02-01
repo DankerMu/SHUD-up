@@ -5,6 +5,7 @@
 //
 
 #include "Model_Data.hpp"
+#include "WaterBalanceDiag.hpp"
 void Model_Data:: f_loop(double t){
     int i;
     for (i = 0; i < NumEle; i++) {
@@ -51,6 +52,16 @@ void Model_Data:: f_loop(double t){
 void Model_Data::f_applyDY(double *DY, double t){
     double area;
     int isf, ius, igw;
+
+    WaterBalanceDiag *wb = wbdiag;
+    const bool want_quad = (wb != nullptr && wb->quadEnabled());
+    const double *ic_raw = want_quad ? wb->icRawData() : nullptr;
+    double p_rate_m3min = 0.0;
+    double et_rate_m3min = 0.0;
+    double qbc_rate_m3min = 0.0;
+    double qss_rate_m3min = 0.0;
+    double qedge_rate_m3min = 0.0;
+    double noncons_edge_rate_m3min = 0.0;
     for (int i = 0; i < NumEle; i++) {
         isf = iSF; ius = iUS; igw = iGW;
         area = Ele[i].area;
@@ -61,6 +72,18 @@ void Model_Data::f_applyDY(double *DY, double t){
             QeleSubTot[i] += QeleSub[i][j];
             CheckNANij(QeleSurf[i][j], i, "QeleSurf[i][j]");
             CheckNANij(QeleSub[i][j], i, "QeleSub[i][j]");
+
+            if (want_quad) {
+                const int inabr = Ele[i].nabr[j] - 1;
+                const int ilake = Ele[i].lakenabr[j] - 1;
+                const double q_edge = QeleSurf[i][j] + QeleSub[i][j];
+                if (inabr < 0 && ilake < 0 && !CS.CloseBoundary) {
+                    qedge_rate_m3min += q_edge;
+                }
+                if (inabr >= 0) {
+                    noncons_edge_rate_m3min += q_edge;
+                }
+            }
         }
         DY[i] = qEleNetPrep[i] - qEleInfil[i] + qEleExfil[i] - QeleSurfTot[i] / area - qEs[i];
         DY[ius] = qEleInfil[i] - qEleRecharge[i] - qEu[i] - qTu[i];
@@ -87,6 +110,21 @@ void Model_Data::f_applyDY(double *DY, double t){
             DY[isf] += Ele[i].QSS / area;
         }else if(Ele[i].iSS < 0){ // SS in GW
             DY[igw] += Ele[i].QSS / area;
+        }
+
+        if (want_quad) {
+            p_rate_m3min += qElePrep[i] * area;
+            if (ic_raw != nullptr) {
+                et_rate_m3min += (ic_raw[i] + qEs[i] + qEu[i] + qEg[i] + qTu[i] + qTg[i]) * area;
+            } else {
+                et_rate_m3min += (qEleE_IC[i] + qEs[i] + qEu[i] + qEg[i] + qTu[i] + qTg[i]) * area;
+            }
+            if (Ele[i].iBC < 0) {
+                qbc_rate_m3min += Ele[i].QBC;
+            }
+            if (Ele[i].iSS != 0) {
+                qss_rate_m3min += Ele[i].QSS;
+            }
         }
         /* Convert with specific yield */
         DY[ius] /= Ele[i].Sy;
@@ -150,6 +188,29 @@ void Model_Data::f_applyDY(double *DY, double t){
 #ifdef DEBUG
         CheckNANi(DY[iLAKE], i, "DY[i] of LAKE (Model_Data::f_applyDY)");
 #endif
+    }
+
+    if (want_quad) {
+        double qout_rate_m3min = 0.0;
+        for (int i = 0; i < NumRiv; i++) {
+            if (Riv[i].toLake >= 0) {
+                continue;
+            }
+            if (Riv[i].down < 0) {
+                qout_rate_m3min += QrivDown[i];
+            }
+            if (Riv[i].BC < 0) {
+                qbc_rate_m3min += Riv[i].qBC;
+            }
+        }
+        wb->updateQuadRates(t,
+                            p_rate_m3min,
+                            et_rate_m3min,
+                            qout_rate_m3min,
+                            qedge_rate_m3min,
+                            qbc_rate_m3min,
+                            qss_rate_m3min,
+                            noncons_edge_rate_m3min);
     }
 }
 

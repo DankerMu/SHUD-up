@@ -190,6 +190,10 @@ run_ccw_case() {
   if [[ -n "${SHUD_VALIDATION_DT_QE_ET_MIN:-}" ]]; then
     upsert_cfg_kv "$cfg" "DT_QE_ET" "${SHUD_VALIDATION_DT_QE_ET_MIN}"
   fi
+  # Optional override for convergence experiments:
+  if [[ -n "${SHUD_VALIDATION_MAX_SOLVER_STEP_MIN:-}" ]]; then
+    upsert_cfg_kv "$cfg" "MAX_SOLVER_STEP" "${SHUD_VALIDATION_MAX_SOLVER_STEP_MIN}"
+  fi
   upsert_cfg_kv "$cfg" "TERRAIN_RADIATION" "${tsr_flag}"
 
   set_forcing_csv_basepath "$forc" "./${tmp_rel}"
