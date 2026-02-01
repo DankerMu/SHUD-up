@@ -51,6 +51,10 @@ void Model_Data::modelSummary(int end){
     screeninfo("\tSolar update interval: %d min\n", CS.solar_update_interval);
     screeninfo("\tRAD_FACTOR_CAP: %.6f\n", CS.rad_factor_cap);
     screeninfo("\tRAD_COSZ_MIN: %.6f\n", CS.rad_cosz_min);
+    screeninfo("\tTSR factor mode: %s\n", TsrFactorModeName(CS.tsr_factor_mode));
+    if (CS.tsr_factor_mode == TSR_FORCING_INTERVAL) {
+        screeninfo("\tTSR integration step: %d min\n", CS.tsr_integration_step_min);
+    }
     sprintf(str,"\tSize of model: \tNcell = %d \tNriver = %d\t NSeg = %d", NumEle, NumRiv, NumSegmt);
     screeninfo(str);
 #ifdef _OPENMP_ON
@@ -184,6 +188,16 @@ void Model_Data::malloc_EleRiv(){
     tsr_solar_bucket = -1;
     tsr_solar_t_aligned = NA_VALUE;
     tsr_solar_pos = SolarPosition{};
+    tsr_forcing_bucket = -1;
+    tsr_forcing_t0 = NA_VALUE;
+    tsr_forcing_t1 = NA_VALUE;
+    tsr_forcing_den = 0.0;
+    tsr_forcing_n = 0;
+    tsr_forcing_dt_int_min = 0;
+    tsr_forcing_sx.clear();
+    tsr_forcing_sy.clear();
+    tsr_forcing_sz.clear();
+    tsr_forcing_wdt.clear();
 }
 
 void Model_Data::copyCalib(){

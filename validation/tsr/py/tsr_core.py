@@ -451,6 +451,61 @@ def solar_update_bucket(t_min: float, interval_min: int) -> tuple[int, float]:
     return bucket, t_aligned
 
 
+def forcing_interval_factor(
+    nx: float,
+    ny: float,
+    nz: float,
+    *,
+    t0_min: float,
+    t1_min: float,
+    lat_deg: float,
+    lon_deg: float,
+    tc: TimeContext,
+    cap: float,
+    cosz_min: float,
+    dt_int_min: int = 60,
+    timezone_hours: float = 0.0,
+) -> float:
+    """
+    Effective TSR factor over forcing interval [t0, t1), assuming forcing shortwave is an interval-mean flux.
+
+    This mirrors the intended C++ behavior for TSR_FACTOR_MODE=FORCING_INTERVAL:
+      F_eff ≈ (∫ w(t) f(t) dt) / (∫ w(t) dt), where w(t)=max(cosZ,0).
+    """
+    if not (_is_finite(t0_min) and _is_finite(t1_min)):
+        return 0.0
+    if not (t1_min > t0_min):
+        return 0.0
+    if dt_int_min <= 0:
+        dt_int_min = 60
+
+    dt_forc = float(t1_min - t0_min)
+    dt_int = min(float(dt_int_min), dt_forc)
+    n = int(math.ceil(dt_forc / dt_int)) if dt_int > 0.0 else 1
+    if n < 1:
+        n = 1
+    dt_seg = dt_forc / float(n)
+
+    num = 0.0
+    den = 0.0
+    for k in range(n):
+        tk = float(t0_min + (k + 0.5) * dt_seg)
+        sp = solar_position(tk, lat_deg, lon_deg, tc, timezone_hours=timezone_hours)
+        w = max(0.0, float(sp.cosZ))
+        if not (w > 0.0):
+            continue
+        fk = terrain_factor(nx, ny, nz, sp, cap=cap, cosz_min=cosz_min)
+        num += w * fk * dt_seg
+        den += w * dt_seg
+
+    if not (den > 0.0):
+        return 0.0
+    feff = num / den
+    if (not _is_finite(feff)) or (not (feff > 0.0)):
+        return 0.0
+    return float(feff)
+
+
 # -----------------------------------------------------------------------------
 # Mesh reader: compute terrain normal vectors like src/classes/Element.cpp
 # -----------------------------------------------------------------------------
@@ -561,4 +616,3 @@ def read_mesh_normals(mesh_path: Union[str, Path]) -> dict[int, tuple[float, flo
         normals[int(eid)] = (float(nxv), float(nyv), float(nzv))
 
     return normals
-

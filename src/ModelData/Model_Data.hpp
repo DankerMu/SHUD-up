@@ -7,6 +7,7 @@
 #define Model_Data_hpp
 
 #include <stdio.h>
+#include <vector>
 #include "TimeSeriesData.hpp"
 #include "ModelConfigure.hpp"
 #include "IO.hpp"
@@ -215,6 +216,16 @@ private:
     long long tsr_solar_bucket = -1;
     double tsr_solar_t_aligned = NA_VALUE;
     SolarPosition tsr_solar_pos{};
+    long long tsr_forcing_bucket = -1;
+    double tsr_forcing_t0 = NA_VALUE;
+    double tsr_forcing_t1 = NA_VALUE;
+    double tsr_forcing_den = 0.0;
+    int tsr_forcing_n = 0;
+    int tsr_forcing_dt_int_min = 0;
+    std::vector<double> tsr_forcing_sx;
+    std::vector<double> tsr_forcing_sy;
+    std::vector<double> tsr_forcing_sz;
+    std::vector<double> tsr_forcing_wdt;
 public:
     /* Methods: */
     Model_Data();

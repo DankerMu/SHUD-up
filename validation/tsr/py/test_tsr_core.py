@@ -13,6 +13,7 @@ from tsr_core import (
     NA_VALUE,
     SolarPosition,
     TimeContext,
+    forcing_interval_factor,
     read_mesh_normals,
     solar_position,
     solar_update_bucket,
@@ -157,6 +158,51 @@ class TestTerrainFactor(unittest.TestCase):
         self.assertEqual(terrain_factor(float("nan"), 0.0, 1.0, sp, cap=5.0, cosz_min=0.05), 0.0)
         self.assertEqual(terrain_factor(0.0, 0.0, 1.0, sp, cap=5.0, cosz_min=float("inf")), 1.0)
         self.assertEqual(terrain_factor(0.0, 0.0, 1.0, sp, cap=-1.0, cosz_min=0.05), 0.0)  # cap->0 => 0
+
+
+class TestForcingIntervalFactor(unittest.TestCase):
+    def test_horizontal_surface_daily_is_one(self) -> None:
+        tc = TimeContext(20000101)
+        feff = forcing_interval_factor(
+            0.0,
+            0.0,
+            1.0,
+            t0_min=0.0,
+            t1_min=1440.0,
+            lat_deg=39.195,
+            lon_deg=-122.71,
+            tc=tc,
+            cap=5.0,
+            cosz_min=0.0,  # denom=cosZ => horizontal plane factor exactly 1 for all sunlit times
+            dt_int_min=60,
+            timezone_hours=0.0,
+        )
+        self.assertAlmostEqual(feff, 1.0, places=12)
+
+    def test_tilted_surface_daily_midnight_start_not_zero(self) -> None:
+        tc = TimeContext(20000101)
+        # 30-degree tilt towards south: (nx=0, ny<0, nz>0)
+        beta = math.radians(30.0)
+        nx = 0.0
+        ny = -math.sin(beta)
+        nz = math.cos(beta)
+        feff = forcing_interval_factor(
+            nx,
+            ny,
+            nz,
+            t0_min=0.0,
+            t1_min=1440.0,
+            lat_deg=39.195,
+            lon_deg=-122.71,
+            tc=tc,
+            cap=5.0,
+            cosz_min=0.05,
+            dt_int_min=60,
+            timezone_hours=0.0,
+        )
+        # If one incorrectly used instantaneous factor at t0=midnight, cosZ<=0 => factor=0.
+        # Interval-effective factor should still be positive for a sun-facing slope.
+        self.assertTrue(feff > 0.0)
 
 
 class TestMeshNormals(unittest.TestCase):

@@ -23,6 +23,8 @@ public:
     void    read_csv();
     void    tsd_interpolation(double t);
     double  getX(double t, int column);
+    double  currentTimeMin() const;
+    double  nextTimeMin() const;
     void    applyCalib(double prcp, double temp);
     void    movePointer(double t);
     void    initialize(int n);

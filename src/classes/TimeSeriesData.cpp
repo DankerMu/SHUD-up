@@ -249,6 +249,23 @@ double _TimeSeriesData::getX(double t, int col)
 {
     return ts[iNow][col];
 }
+
+double _TimeSeriesData::currentTimeMin() const
+{
+    if (iNow < 0 || iNow > MAXQUE || ts[iNow] == nullptr) {
+        return NA_VALUE;
+    }
+    return ts[iNow][0];
+}
+
+double _TimeSeriesData::nextTimeMin() const
+{
+    if (iNext < 0 || iNext > MAXQUE || ts[iNext] == nullptr) {
+        return NA_VALUE;
+    }
+    return ts[iNext][0];
+}
+
 int _TimeSeriesData::get_Ncol(){
     return ncol;
 }
