@@ -232,6 +232,7 @@ def main() -> int:
 
     def summarize_basin(basin: str, mesh: Path, out_base: Path, out_tsr: Path) -> None:
         groups = build_aspect_groups(mesh_path=mesh, slope_deg_min=args.slope_deg_min, aspect_halfwidth_deg=args.aspect_halfwidth_deg)
+        mask_other_all = ~(groups.mask_south | groups.mask_north)
         A = float(groups.areas.sum())
         if not (A > 0.0):
             raise SummarizeError(f"invalid mesh area for {basin}: {A}")
@@ -254,12 +255,34 @@ def main() -> int:
         st = _flatten_stats(rn_factor.reshape(-1))
         print(f"rn_factor (TSR=ON): min={st['min']:.3f}, p50={st['p50']:.3f}, p95={st['p95']:.3f}, max={st['max']:.3f}")
 
-        # South-North rn_t delta (TSR=ON)
-        _, rn_t, _ = _read_matrix_fast(out_tsr / f"{basin}.rn_t.dat")
-        s_mean = _aw_mean_series(rn_t, areas=groups.areas, mask=groups.mask_south)
-        n_mean = _aw_mean_series(rn_t, areas=groups.areas, mask=groups.mask_north)
-        delta_rn = float(np.nanmean(s_mean - n_mean))
-        print(f"Δ rn_t (South-North), TSR=ON: {delta_rn:+.4g} W/m^2 (area-weighted time mean)")
+        # Group-wise TSR effect on rn_t / ETa (area-weighted time mean)
+        _, rn_base, _ = _read_matrix_fast(out_base / f"{basin}.rn_t.dat")
+        _, rn_tsr, _ = _read_matrix_fast(out_tsr / f"{basin}.rn_t.dat")
+
+        rn_b_s = _aw_mean_series(rn_base, areas=groups.areas, mask=groups.mask_south)
+        rn_b_n = _aw_mean_series(rn_base, areas=groups.areas, mask=groups.mask_north)
+        rn_b_o = _aw_mean_series(rn_base, areas=groups.areas, mask=mask_other_all)
+        rn_t_s = _aw_mean_series(rn_tsr, areas=groups.areas, mask=groups.mask_south)
+        rn_t_n = _aw_mean_series(rn_tsr, areas=groups.areas, mask=groups.mask_north)
+        rn_t_o = _aw_mean_series(rn_tsr, areas=groups.areas, mask=mask_other_all)
+
+        print("TSR effect on rn_t (TSR−BASE), area-weighted time mean:")
+        print(f"  South: {float(np.nanmean(rn_t_s - rn_b_s)):+.4g} W/m^2")
+        print(f"  North: {float(np.nanmean(rn_t_n - rn_b_n)):+.4g} W/m^2")
+        print(f"  Other: {float(np.nanmean(rn_t_o - rn_b_o)):+.4g} W/m^2")
+
+        _, et_base, _ = _read_matrix_fast(out_base / f"{basin}.eleveta.dat")
+        _, et_tsr, _ = _read_matrix_fast(out_tsr / f"{basin}.eleveta.dat")
+        et_b_s = _aw_mean_series(et_base, areas=groups.areas, mask=groups.mask_south) * 1000.0
+        et_b_n = _aw_mean_series(et_base, areas=groups.areas, mask=groups.mask_north) * 1000.0
+        et_b_o = _aw_mean_series(et_base, areas=groups.areas, mask=mask_other_all) * 1000.0
+        et_t_s = _aw_mean_series(et_tsr, areas=groups.areas, mask=groups.mask_south) * 1000.0
+        et_t_n = _aw_mean_series(et_tsr, areas=groups.areas, mask=groups.mask_north) * 1000.0
+        et_t_o = _aw_mean_series(et_tsr, areas=groups.areas, mask=mask_other_all) * 1000.0
+        print("TSR effect on ETa (TSR−BASE), area-weighted time mean:")
+        print(f"  South: {float(np.nanmean(et_t_s - et_b_s)):+.4g} mm/day")
+        print(f"  North: {float(np.nanmean(et_t_n - et_b_n)):+.4g} mm/day")
+        print(f"  Other: {float(np.nanmean(et_t_o - et_b_o)):+.4g} mm/day")
 
         # Basin totals
         tb = basin_totals_mm(basinwb_path=out_base / f"{basin}.basinwbfull.dat", mesh_area_m2=A)

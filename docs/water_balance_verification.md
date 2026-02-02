@@ -334,7 +334,7 @@ TSR=ON 下的季节性差异（`Δ = 阳坡 - 阴坡`，按月分组：4–9 月
 - `rn_t`：全期 `Δ=64.2232 W/m²`；夏季均值 `38.6391 W/m²`；冬季均值 `89.8914 W/m²`
 - `ETa`：全期 `Δ=0.150583 mm/day`；夏季均值 `0.185505 mm/day`；冬季均值 `0.115545 mm/day`
 
-（图）南北坡差异随时间变化（baseline vs TSR；South−North）：
+（图）TSR 对不同坡向分组的净效应随时间变化（TSR−BASE；South / North / Other=非南北坡）：
 
 ![](figures/water_balance/aspect_delta_timeseries_full.png)
 

@@ -90,14 +90,14 @@
 > - 当 forcing 为子日尺度（如 qhh 的 3 小时辐射 forcing）且 `factor` 与 `rn_h` 强相关时，通常有 $\langle rn_h \cdot factor \rangle \ne \langle rn_h \rangle \cdot \langle factor \rangle$，因此不能仅凭 “`rn_factor < 1`” 就断言 “`rn_t < rn_h`”；这也是 qhh 中会出现 `rn_t/rn_h > 1` 的原因之一。
 > - 对 heihe（forcing 逐日、`rn_h` 在日内近似常数）上述差异会显著减弱，因而 `rn_t ≈ rn_h · rn_factor` 更接近成立。
 
-### 3.3 阴阳坡（South−North）辐射差异
+### 3.3 坡向分组的辐射响应（TSR−BASE）
 
-时间平均的 **South−North** 差异（area-weighted time mean）：
+时间平均的组均值变化（area-weighted time mean；TSR−Baseline）：
 
-- heihe：$\Delta rn_t$（South−North）≈ **+53.62 W/m²**（TSR=ON；Baseline≈0）
-- qhh：$\Delta rn_t$（South−North）≈ **+37.38 W/m²**（TSR=ON；Baseline≈0）
+- heihe：South **+23.33 W/m²**，North **-30.29 W/m²**，Other **-1.609 W/m²**
+- qhh：South **+11.69 W/m²**，North **-25.69 W/m²**，Other **-3.519 W/m²**
 
-对应时间序列图：
+对应时间序列图（各组的 `TSR−BASE`）：
 
 - heihe：![heihe aspect delta](figures/tsr_heihe_qhh/heihe/aspect_delta_timeseries.png)
 - qhh：![qhh aspect delta](figures/tsr_heihe_qhh/qhh/aspect_delta_timeseries.png)

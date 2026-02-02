@@ -742,37 +742,51 @@ def plot_aspect_delta_timeseries(
     title: str,
 ) -> None:
     g = build_aspect_groups(mesh_path=mesh_path, slope_deg_min=slope_deg_min, aspect_halfwidth_deg=aspect_halfwidth_deg)
+    mask_other_all = ~(g.mask_south | g.mask_north)
 
-    def delta_series(out_dir: Path, dat_name: str) -> tuple[np.ndarray, np.ndarray]:
+    def group_means(out_dir: Path, dat_name: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         t_min, vals, _ = _read_matrix_fast(out_dir / dat_name)
         south = _aw_mean_series(vals, areas=g.areas, mask=g.mask_south)
         north = _aw_mean_series(vals, areas=g.areas, mask=g.mask_north)
+        other = _aw_mean_series(vals, areas=g.areas, mask=mask_other_all)
         day = t_min / 1440.0
-        return day, (south - north)
+        return day, south, north, other
 
-    day_b, rn_b = delta_series(out_base, "ccw.rn_t.dat")
-    day_t, rn_t = delta_series(out_tsr, "ccw.rn_t.dat")
-    _, et_b_mday = delta_series(out_base, "ccw.eleveta.dat")
-    _, et_t_mday = delta_series(out_tsr, "ccw.eleveta.dat")
+    day_b, rn_b_s, rn_b_n, rn_b_o = group_means(out_base, "ccw.rn_t.dat")
+    day_t, rn_t_s, rn_t_n, rn_t_o = group_means(out_tsr, "ccw.rn_t.dat")
+    _, et_b_s, et_b_n, et_b_o = group_means(out_base, "ccw.eleveta.dat")
+    _, et_t_s, et_t_n, et_t_o = group_means(out_tsr, "ccw.eleveta.dat")
+
+    if day_b.shape != day_t.shape or not np.allclose(day_b, day_t, rtol=0.0, atol=0.0):
+        raise PlotError("Baseline and TSR time axes differ; cannot plot aspect TSR effect.")
+
+    rn_eff_s = rn_t_s - rn_b_s
+    rn_eff_n = rn_t_n - rn_b_n
+    rn_eff_o = rn_t_o - rn_b_o
+    et_eff_s = (et_t_s - et_b_s) * 1000.0
+    et_eff_n = (et_t_n - et_b_n) * 1000.0
+    et_eff_o = (et_t_o - et_b_o) * 1000.0
 
     with plt.rc_context(_pub_rc()):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12.0, 7.2), sharex=True)
 
-        ax1.plot(day_b, rn_b, color=_C_BASE, lw=1.0, alpha=0.9, label="Baseline (TSR=OFF)")
-        ax1.plot(day_t, rn_t, color=_C_TSR, lw=1.0, alpha=0.9, ls="--", label="TSR=ON")
+        ax1.plot(day_b, rn_eff_s, color=_C_TSR, lw=1.0, alpha=0.9, label="South (TSR−BASE)")
+        ax1.plot(day_b, rn_eff_n, color=_C_BASE, lw=1.0, alpha=0.9, label="North (TSR−BASE)")
+        ax1.plot(day_b, rn_eff_o, color=_C_GREY, lw=1.0, alpha=0.9, label="Other (TSR−BASE)")
         ax1.axhline(0.0, color="k", lw=0.8, alpha=0.5)
-        ax1.set_ylabel(r"$\Delta rn_t$ (W m$^{-2}$)  South−North")
-        ax1.set_title(r"Radiation contrast ($South-North$)")
+        ax1.set_ylabel(r"$\Delta rn_t$ (W m$^{-2}$)  TSR−BASE")
+        ax1.set_title("TSR effect on radiation (group means)")
 
-        ax2.plot(day_b, et_b_mday * 1000.0, color=_C_BASE, lw=1.0, alpha=0.9, label="Baseline (TSR=OFF)")
-        ax2.plot(day_t, et_t_mday * 1000.0, color=_C_TSR, lw=1.0, alpha=0.9, ls="--", label="TSR=ON")
+        ax2.plot(day_b, et_eff_s, color=_C_TSR, lw=1.0, alpha=0.9, label="South (TSR−BASE)")
+        ax2.plot(day_b, et_eff_n, color=_C_BASE, lw=1.0, alpha=0.9, label="North (TSR−BASE)")
+        ax2.plot(day_b, et_eff_o, color=_C_GREY, lw=1.0, alpha=0.9, label="Other (TSR−BASE)")
         ax2.axhline(0.0, color="k", lw=0.8, alpha=0.5)
         ax2.set_xlabel("Simulation day (left endpoint)")
-        ax2.set_ylabel(r"$\Delta ET_a$ (mm / day)  South−North")
-        ax2.set_title(r"ET contrast ($South-North$)")
+        ax2.set_ylabel(r"$\Delta ET_a$ (mm / day)  TSR−BASE")
+        ax2.set_title("TSR effect on ET (group means)")
 
         handles, labels = ax1.get_legend_handles_labels()
-        fig.legend(handles, labels, loc="upper center", ncols=2, frameon=False, bbox_to_anchor=(0.5, 1.02))
+        fig.legend(handles, labels, loc="upper center", ncols=3, frameon=False, bbox_to_anchor=(0.5, 1.02))
         fig.suptitle(title, y=1.08)
 
         fig.tight_layout()
@@ -1216,7 +1230,7 @@ def main() -> int:
         slope_deg_min=args.slope_deg_min,
         aspect_halfwidth_deg=args.aspect_halfwidth_deg,
         out_path=args.outdir / "aspect_delta_timeseries_full.png",
-        title="Aspect response (South−North) time series (full run)",
+        title="Aspect-group TSR effect time series (TSR−BASE; full run)",
     )
     plot_aspect_storage_delta_timeseries(
         out_base=args.base,
