@@ -439,18 +439,6 @@ def terrain_factor(
     return factor
 
 
-def solar_update_bucket(t_min: float, interval_min: int) -> tuple[int, float]:
-    # Matches the bucket alignment in src/ModelData/MD_ET.cpp.
-    if interval_min <= 0:
-        interval_min = 60
-    if not _is_finite(t_min):
-        return 0, 0.0
-    bucket_eps = 1.0e-6
-    bucket = int(math.floor((t_min + bucket_eps) / float(interval_min)))
-    t_aligned = float(bucket) * float(interval_min)
-    return bucket, t_aligned
-
-
 def forcing_interval_factor(
     nx: float,
     ny: float,
@@ -469,7 +457,7 @@ def forcing_interval_factor(
     """
     Effective TSR factor over forcing interval [t0, t1), assuming forcing shortwave is an interval-mean flux.
 
-    This mirrors the intended C++ behavior for TSR_FACTOR_MODE=FORCING_INTERVAL:
+    This mirrors SHUD's forcing-interval TSR behavior:
       F_eff ≈ (∫ w(t) f(t) dt) / (∫ w(t) dt), where w(t)=max(cosZ,0).
     """
     if not (_is_finite(t0_min) and _is_finite(t1_min)):

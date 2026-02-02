@@ -213,9 +213,6 @@ private:
     /* Terrain solar radiation (TSR) cache */
     double *tsr_factor = nullptr;
     long long *tsr_factor_bucket = nullptr;
-    long long tsr_solar_bucket = -1;
-    double tsr_solar_t_aligned = NA_VALUE;
-    SolarPosition tsr_solar_pos{};
     long long tsr_forcing_bucket = -1;
     double tsr_forcing_t0 = NA_VALUE;
     double tsr_forcing_t1 = NA_VALUE;

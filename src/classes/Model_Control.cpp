@@ -226,13 +226,19 @@ void Control_Data::read(const char *fn){
         else if (strcasecmp("SOLAR_UPDATE_INTERVAL", optstr) == 0) {
             const int interval = (int)val;
             if (interval > 0) {
-                solar_update_interval = interval;
+                /* Deprecated: SOLAR_UPDATE_INTERVAL used to control an "instant" TSR bucket update.
+                 * TSR now always uses forcing-interval equivalent factor; reuse this value as the
+                 * integration step for backward compatibility.
+                 */
+                tsr_integration_step_min = interval;
+                fprintf(stderr,
+                        "WARNING: SOLAR_UPDATE_INTERVAL is deprecated; treating it as TSR_INTEGRATION_STEP_MIN=%d (min).\n",
+                        tsr_integration_step_min);
             } else {
                 fprintf(stderr,
-                        "WARNING: invalid SOLAR_UPDATE_INTERVAL value %.3f in %s; using %d (min). Must be > 0.\n",
+                        "WARNING: invalid SOLAR_UPDATE_INTERVAL value %.3f in %s; ignoring. Must be > 0.\n",
                         val,
-                        fn,
-                        solar_update_interval);
+                        fn);
             }
         }
         else if (strcasecmp("RAD_FACTOR_CAP", optstr) == 0) {
@@ -261,34 +267,15 @@ void Control_Data::read(const char *fn){
             }
         }
         else if (strcasecmp("TSR_FACTOR_MODE", optstr) == 0) {
-            const TsrFactorMode default_mode = TSR_INSTANT;
             char mode_str[MAXLEN] = "";
-            tsr_factor_mode = default_mode;
-            if (sscanf(str, "%s %s", optstr, mode_str) != 2) {
-                fprintf(stderr,
-                        "WARNING: TSR_FACTOR_MODE missing value in %s; using default %s (%d).\n",
-                        fn,
-                        TsrFactorModeName(default_mode),
-                        default_mode);
-            } else if (strcasecmp(mode_str, "INSTANT") == 0) {
-                tsr_factor_mode = TSR_INSTANT;
-            } else if (strcasecmp(mode_str, "FORCING_INTERVAL") == 0) {
-                tsr_factor_mode = TSR_FORCING_INTERVAL;
-            } else {
-                char *endptr = NULL;
-                const double mode_val = strtod(mode_str, &endptr);
-                if (endptr != NULL && *endptr == '\0' && (mode_val == 0.0 || mode_val == 1.0)) {
-                    tsr_factor_mode = static_cast<TsrFactorMode>(static_cast<int>(mode_val));
-                } else {
+            if (sscanf(str, "%s %s", optstr, mode_str) == 2) {
+                if (strcasecmp(mode_str, "INSTANT") == 0 || strcmp(mode_str, "0") == 0) {
                     fprintf(stderr,
-                            "WARNING: invalid TSR_FACTOR_MODE value '%s' in %s; using default %s (%d). "
-                            "Valid values: INSTANT/FORCING_INTERVAL or 0/1.\n",
-                            mode_str,
-                            fn,
-                            TsrFactorModeName(default_mode),
-                            default_mode);
-                    tsr_factor_mode = default_mode;
+                            "WARNING: TSR_FACTOR_MODE=INSTANT is deprecated and no longer supported; using forcing-interval factor.\n");
                 }
+            } else {
+                fprintf(stderr,
+                        "WARNING: TSR_FACTOR_MODE is deprecated; ignoring (TSR uses forcing-interval factor).\n");
             }
         }
         else if (strcasecmp("TSR_INTEGRATION_STEP_MIN", optstr) == 0) {
@@ -401,11 +388,9 @@ void Control_Data::read(const char *fn){
         fprintf(stdout, "* \t SOLAR_LAT_DEG: %.6f\n", solar_lat_deg_fixed);
     }
     fprintf(stdout, "* \t TERRAIN_RADIATION: %d\n", terrain_radiation);
-    fprintf(stdout, "* \t SOLAR_UPDATE_INTERVAL: %d min\n", solar_update_interval);
     fprintf(stdout, "* \t RAD_FACTOR_CAP: %.6f\n", rad_factor_cap);
     fprintf(stdout, "* \t RAD_COSZ_MIN: %.6f\n", rad_cosz_min);
-    fprintf(stdout, "* \t TSR_FACTOR_MODE: %s\n", TsrFactorModeName(tsr_factor_mode));
-    if (tsr_factor_mode == TSR_FORCING_INTERVAL) {
+    if (terrain_radiation) {
         fprintf(stdout, "* \t TSR_INTEGRATION_STEP_MIN: %d min\n", tsr_integration_step_min);
     }
 }

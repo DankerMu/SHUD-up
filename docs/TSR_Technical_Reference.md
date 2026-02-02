@@ -19,11 +19,9 @@ Rn_terrain = Rn_horizontal × TSR_factor
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `TERRAIN_RADIATION` | 0 | 0=关闭, 1=启用 |
-| `SOLAR_UPDATE_INTERVAL` | 60 | 太阳位置更新间隔 (分钟) |
 | `RAD_FACTOR_CAP` | 5.0 | TSR因子上限，防止极端几何导致放大过大 |
 | `RAD_COSZ_MIN` | 0.05 | cosZ下限截断，避免日出/日落附近数值发散 |
-| `TSR_FACTOR_MODE` | INSTANT | TSR 因子语义：INSTANT=瞬时几何因子，FORCING_INTERVAL=forcing 区间等效因子 |
-| `TSR_INTEGRATION_STEP_MIN` | 60 | forcing 区间等效因子积分步长 (分钟)，仅在 `TSR_FACTOR_MODE=FORCING_INTERVAL` 时生效 |
+| `TSR_INTEGRATION_STEP_MIN` | 60 | forcing 区间等效因子积分步长 (分钟) |
 | `RADIATION_INPUT_MODE` | SWDOWN | SWDOWN=下行短波，SWNET=净短波 |
 | `SOLAR_LONLAT_MODE` | FORCING_FIRST | 经纬度来源选择 |
 
@@ -33,13 +31,13 @@ Rn_terrain = Rn_horizontal × TSR_factor
 - `FORCING_MEAN`: 对 forcing 列表中有效经纬度取均值
 - `FIXED`: 使用 `SOLAR_LON_DEG` / `SOLAR_LAT_DEG` 指定值
 
-### TSR_FACTOR_MODE 选项（重要）
+### TSR 因子语义（当前实现）
 
-- `INSTANT`（默认）：在一个时间点（由 `SOLAR_UPDATE_INTERVAL` 的 bucket 对齐）计算太阳位置与 `TSR_factor`，并在该 bucket 内复用。
-  - 适用：forcing 较高时间分辨率（小时/子小时），且更关注运行速度时。
-- `FORCING_INTERVAL`：对每个 forcing 记录区间 `[t0,t1)` 计算一个等效 `TSR_factor`，并在该 forcing 区间内保持常数。
-  - 计算形式为 cosZ 加权平均：`F_eff = (∫ max(cosZ,0) * f(t) dt) / (∫ max(cosZ,0) dt)`，其中 `f(t)` 仍遵循 `terrainFactor()`（含 `RAD_COSZ_MIN`/`RAD_FACTOR_CAP`）。
-  - 适用：coarse forcing（尤其逐日短波 forcing），可避免“夜间 factor=0”把区间等效因子显著拉低的问题。
+- TSR 因子按 forcing 的“当前记录区间” `[t0,t1)` 计算一个等效 `TSR_factor`，并在该 forcing 区间内保持常数。
+- 区间等效形式为 cosZ 加权平均：`F_eff = (∫ max(cosZ,0) * f(t) dt) / (∫ max(cosZ,0) dt)`，其中 `f(t)` 仍遵循 `terrainFactor()`（含 `RAD_COSZ_MIN`/`RAD_FACTOR_CAP`）。
+- `TSR_INTEGRATION_STEP_MIN` 控制 `[t0,t1)` 内采样步长；对逐日短波 forcing，默认 60 分钟对应每天 24 个采样点。
+
+> 兼容性说明：历史参数 `SOLAR_UPDATE_INTERVAL` / `TSR_FACTOR_MODE` 已废弃；若仍出现在配置中会被解析，但不再改变 TSR 的计算方法。
 
 ## 3. 诊断输出
 

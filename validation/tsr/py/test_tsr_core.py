@@ -16,7 +16,6 @@ from tsr_core import (
     forcing_interval_factor,
     read_mesh_normals,
     solar_position,
-    solar_update_bucket,
     terrain_factor,
 )
 
@@ -75,19 +74,6 @@ class TestTimeContext(unittest.TestCase):
         tc.set_base_date(0)
         self.assertEqual(tc.julian_day(0.0), 0)
         self.assertEqual(tc.format_date(0.0), "0000-00-00")
-
-
-class TestSolarBucket(unittest.TestCase):
-    def test_bucket_alignment_epsilon(self) -> None:
-        # Mirrors MD_ET.cpp bucket_eps logic: t=59.999999 + 1e-6 => 60.0 => bucket 1.
-        b, t_aligned = solar_update_bucket(59.999999, 60)
-        self.assertEqual(b, 1)
-        self.assertEqual(t_aligned, 60.0)
-
-    def test_bucket_nonpositive_interval_defaults(self) -> None:
-        b, t_aligned = solar_update_bucket(0.0, 0)
-        self.assertEqual(b, 0)
-        self.assertEqual(t_aligned, 0.0)
 
 
 class TestSolarPosition(unittest.TestCase):
@@ -286,7 +272,7 @@ class TestCompareTSR(unittest.TestCase):
                         "SOLAR_LONLAT_MODE FIXED",
                         "SOLAR_LON_DEG 0",
                         "SOLAR_LAT_DEG 0",
-                        "SOLAR_UPDATE_INTERVAL 60",
+                        "TSR_INTEGRATION_STEP_MIN 60",
                         "RAD_FACTOR_CAP 5.0",
                         "RAD_COSZ_MIN 0.05",
                     ]
@@ -299,7 +285,7 @@ class TestCompareTSR(unittest.TestCase):
                 "\n".join(
                     [
                         "1 20000101",
-                        ".",
+                        str(td),
                         "ID Lon Lat X Y Z Filename",
                         "1 0 0 0 0 -9999 forcing.csv",
                     ]
@@ -308,9 +294,35 @@ class TestCompareTSR(unittest.TestCase):
             )
 
             tc = TimeContext(20000101)
+            forcing_csv = Path(td) / "forcing.csv"
+            forcing_csv.write_text(
+                "\n".join(
+                    [
+                        "3 6 20000101 20000102",
+                        "Time_Day APCP TMP SPFH UGRD DSWRF",
+                        "0 0 0 0 0 0",
+                        "0.5 0 0 0 0 0",  # 720 min
+                        "0.5416666666666666 0 0 0 0 0",  # 780 min
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
             t = 720.0
-            sp = solar_position(t, 0.0, 0.0, tc, timezone_hours=0.0)
-            f = terrain_factor(0.0, 0.0, 1.0, sp, cap=5.0, cosz_min=0.05)
+            f = forcing_interval_factor(
+                0.0,
+                0.0,
+                1.0,
+                t0_min=720.0,
+                t1_min=780.0,
+                lat_deg=0.0,
+                lon_deg=0.0,
+                tc=tc,
+                cap=5.0,
+                cosz_min=0.05,
+                dt_int_min=60,
+                timezone_hours=0.0,
+            )
             rn_h = 123.456
 
             header = ["# SHUD output", "# Terrain radiation (TSR): ON"]

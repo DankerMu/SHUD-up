@@ -238,6 +238,43 @@ def max_abs_err_relation(rn_h: DatMeta, rn_t: DatMeta, factor: DatMeta) -> float
     return m
 
 
+def max_abs_err_bound(rn_h: DatMeta, rn_t: DatMeta, *, cap: float) -> float:
+    """
+    Validate that 0 <= rn_t <= cap * rn_h (element-wise), which must hold when:
+      - rn_h is downwelling shortwave (>=0)
+      - TSR factor is clamped to [0, cap]
+
+    Note: output variables are averaged separately over the output interval, so
+    rn_t != rn_h * factor is NOT guaranteed in general.
+    """
+    if rn_h.num_var != rn_t.num_var:
+        raise ValidationError("num_var mismatch in rn_h/rn_t bound check")
+    if rn_h.num_records != rn_t.num_records:
+        raise ValidationError("record count mismatch in rn_h/rn_t bound check")
+    if not math.isfinite(cap) or cap < 0.0:
+        cap = 0.0
+
+    m = 0.0
+    for (th, vh), (tt, vt) in zip(iter_records(rn_h), iter_records(rn_t)):
+        if th != tt:
+            raise ValidationError("time index mismatch across rn_h/rn_t")
+        for h, t in zip(vh, vt):
+            # Lower bound: rn_t >= 0
+            if t < 0.0:
+                d = -t
+                if d > m:
+                    m = d
+
+            # Upper bound: rn_t <= cap * rn_h (for non-negative rn_h)
+            if h >= 0.0:
+                ub = cap * h
+                if t > ub:
+                    d = t - ub
+                    if d > m:
+                        m = d
+    return m
+
+
 root = Path(os.environ.get("SHUD_REPO_ROOT", os.getcwd()))
 report_path = Path(os.environ.get("SHUD_REPORT_PATH", root / "validation" / "tsr" / "test_report.txt"))
 expected_end_days = int(os.environ.get("SHUD_VALIDATION_END_DAYS", "2"))
@@ -306,13 +343,16 @@ try:
     tsr_rn_t_stats = scan_stats(tsr_rn_t)
     tsr_factor_stats = scan_stats(tsr_factor)
 
-    # Physics relation: rn_t ≈ rn_h * factor.
+    # Baseline physics relation: factor==1 => rn_t == rn_h.
     err_base = max_abs_err_relation(base_rn_h, base_rn_t, base_factor)
-    err_tsr = max_abs_err_relation(tsr_rn_h, tsr_rn_t, tsr_factor)
     if err_base > 1e-9:
         raise ValidationError(f"baseline rn_t != rn_h * factor (max abs err={err_base:.3e})")
-    if err_tsr > 1e-9:
-        raise ValidationError(f"tsr rn_t != rn_h * factor (max abs err={err_tsr:.3e})")
+
+    # TSR run: rn_t == rn_h * factor is not guaranteed because outputs are interval-averaged separately.
+    # Instead validate simple physical bounds implied by factor clamping.
+    err_tsr_bound = max_abs_err_bound(tsr_rn_h, tsr_rn_t, cap=5.0)
+    if err_tsr_bound > 1e-9:
+        raise ValidationError(f"tsr rn_t violates bounds 0<=rn_t<=cap*rn_h (max abs err={err_tsr_bound:.3e})")
 
     # Factor expectations.
     base_factor_maxdev = max_abs_from_constant(base_factor, 1.0)
@@ -349,7 +389,7 @@ try:
     lines.append("")
     lines.append("Validation: physical relation & diff")
     lines.append(f"- baseline: max |factor-1|={base_factor_maxdev:.3e}, rn_t=rn_h*factor err={err_base:.3e}")
-    lines.append(f"- tsr: factor range=[{tsr_mn:.6f}, {tsr_mx:.6f}], rn_t=rn_h*factor err={err_tsr:.3e}")
+    lines.append(f"- tsr: factor range=[{tsr_mn:.6f}, {tsr_mx:.6f}], rn_t bound err={err_tsr_bound:.3e}")
     lines.append(f"- baseline vs tsr: max |factor_base-factor_tsr|={diff_factor:.3e}")
     lines.append(f"- baseline vs tsr: max |rn_t_base-rn_t_tsr|={diff_rn_t:.3e}")
     lines.append("")

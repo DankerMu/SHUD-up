@@ -42,14 +42,14 @@ MODIFICATIONS/ADDITIONS from v1.0
 MODIFICATIONS/ADDITIONS from v2.0
 
 1. Add Terrain Solar Radiation (TSR) module to correct shortwave radiation based on slope and aspect.
-2. New configuration parameters: TERRAIN_RADIATION, SOLAR_UPDATE_INTERVAL, RAD_FACTOR_CAP, RAD_COSZ_MIN, RADIATION_INPUT_MODE, SOLAR_LONLAT_MODE.
+2. New configuration parameters: TERRAIN_RADIATION, RAD_FACTOR_CAP, RAD_COSZ_MIN, RADIATION_INPUT_MODE, SOLAR_LONLAT_MODE, TSR_INTEGRATION_STEP_MIN.
+   - Note: SOLAR_UPDATE_INTERVAL is deprecated and treated as TSR_INTEGRATION_STEP_MIN for backward compatibility.
 3. New diagnostic outputs when TSR enabled: *.rn_h.dat (horizontal radiation), *.rn_t.dat (terrain-corrected radiation), *.rn_factor.dat (TSR factor).
 4. Enhanced binary output file header with metadata (radiation mode, TSR status, solar coordinates).
 5. Add validation framework in validation/tsr/ with Python dat reader and unit tests.
 6. Add post-processing tools in post_analysis/ for TSR effect comparison.
 
 See docs/TSR_Technical_Reference.md for detailed documentation.
-
 
 
 

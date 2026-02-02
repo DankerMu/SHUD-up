@@ -2,7 +2,7 @@
 
 ## 1. 概述：TSR 使用单点太阳位置近似
 
-SHUD 的 TSR（Terrain Shortwave Radiation / 地形短波辐射修正）在计算地形遮蔽与坡面入射短波时，采用“单个全局太阳位置”的近似：在每个 `SOLAR_UPDATE_INTERVAL` 时间桶内，仅基于 B2a 中设置的 `solar_lon_deg/solar_lat_deg`（全局经纬度）计算一次太阳位置，并在整个流域范围内复用该太阳高度角/方位角结果。
+SHUD 的 TSR（Terrain Shortwave Radiation / 地形短波辐射修正）在计算地形遮蔽与坡面入射短波时，采用“单个全局太阳位置”的近似：在每个 forcing 记录区间 `[t0,t1)` 内，仅基于 B2a 中设置的 `solar_lon_deg/solar_lat_deg`（全局经纬度）计算太阳几何（可在区间内按 `TSR_INTEGRATION_STEP_MIN` 采样并做等效平均），并在整个流域范围内复用该太阳高度角/方位角结果。
 
 该做法显著降低计算量，但隐含“流域内太阳位置空间差异可忽略”的物理假设，因此存在空间尺度适用范围。
 
@@ -51,5 +51,6 @@ SHUD 的 TSR（Terrain Shortwave Radiation / 地形短波辐射修正）在计�
 
 ## 7. 实现细节与边界行为说明
 
-- 时间对齐策略：`SOLAR_UPDATE_INTERVAL` 采用时间桶左端点对齐（bucket left endpoint）。即每个桶内的太阳位置仅在桶起始时刻计算一次，并在该桶内复用。
+- 时间对齐策略：TSR 因子按 forcing 的“当前记录区间” `[t0,t1)` 计算，并在该 forcing 区间内保持常数；区间内用 `w(t)=max(cosZ,0)` 做加权平均，避免夜间把等效因子“稀释”。
+- 采样步长：`TSR_INTEGRATION_STEP_MIN` 控制区间内太阳几何采样的时间步长（分钟）；对于逐日短波 forcing，默认 60 分钟即每天 24 个采样点。
 - `RAD_COSZ_MIN` 行为：日出/日落附近 `cosZ` 很小，TSR 分母会被 `RAD_COSZ_MIN` 截断以避免数值发散；此时“水平面 factor < 1”的现象属于预期边界行为，并不意味着错误。

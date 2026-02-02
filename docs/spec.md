@@ -30,7 +30,7 @@
 
 ### 2) TSR：参数与边界行为明确化
 
-- 继续保持关键参数可配置（例如 `SOLAR_UPDATE_INTERVAL`、`RAD_FACTOR_CAP`、`RAD_COSZ_MIN`）。
+- 继续保持关键参数可配置（例如 `TSR_INTEGRATION_STEP_MIN`、`RAD_FACTOR_CAP`、`RAD_COSZ_MIN`）。
 - 对低太阳高度角附近的边界行为（例如 `RAD_COSZ_MIN` 截断导致的数值特性）在文档中给出明确解释与建议默认值范围。
 
 ### 3) 验证与回归（Validation / Regression）

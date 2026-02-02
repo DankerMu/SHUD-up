@@ -35,179 +35,139 @@ void Model_Data::tReadForcing(double t, int i){
     double dswrf_t = dswrf_h;
     double factor = 1.0;
     if (CS.terrain_radiation) {
-        if (CS.tsr_factor_mode == TSR_FORCING_INTERVAL) {
-            const double t0 = tsd_weather[idx].currentTimeMin();
-            double t1 = tsd_weather[idx].nextTimeMin();
-            if (!std::isfinite(t0)) {
-                factor = 0.0;
-            } else {
-                if (!std::isfinite(t1) || !(t1 > t0)) {
-                    // Fall back to a single-step interval if forcing time is not available.
-                    t1 = t0 + CS.SolverStep;
-                }
-
-                /* Bucket key: forcing interval left endpoint (minute) */
-                const long long bucket = (long long)llround(t0);
-
-                /* Precompute solar samples for this forcing interval (shared across elements). */
-                int dt_int_min = CS.tsr_integration_step_min;
-                if (dt_int_min <= 0) {
-                    dt_int_min = 60;
-                }
-
-                if (bucket != tsr_forcing_bucket || t0 != tsr_forcing_t0 || t1 != tsr_forcing_t1 ||
-                    dt_int_min != tsr_forcing_dt_int_min) {
-                    tsr_forcing_bucket = bucket;
-                    tsr_forcing_t0 = t0;
-                    tsr_forcing_t1 = t1;
-                    tsr_forcing_dt_int_min = dt_int_min;
-
-                    const double dt_forc = t1 - t0;
-                    double dt_int = (double)dt_int_min;
-                    if (dt_int > dt_forc) {
-                        dt_int = dt_forc;
-                    }
-
-                    int n = (int)std::ceil(dt_forc / dt_int);
-                    if (n < 1) {
-                        n = 1;
-                    }
-                    tsr_forcing_n = n;
-                    const double dt_seg = dt_forc / (double)n;
-
-                    tsr_forcing_sx.assign((size_t)n, 0.0);
-                    tsr_forcing_sy.assign((size_t)n, 0.0);
-                    tsr_forcing_sz.assign((size_t)n, 0.0);
-                    tsr_forcing_wdt.assign((size_t)n, 0.0);
-                    tsr_forcing_den = 0.0;
-
-                    for (int k = 0; k < n; k++) {
-                        const double tk = t0 + (k + 0.5) * dt_seg;
-
-                        // forcing 时间为 UTC；必须显式传入 timezone_hours=0.0
-                        // 避免 solarPosition() 根据 lon 推算本地时区（round(lon/15)）导致相位偏移
-                        const SolarPosition sp = solarPosition(tk, CS.solar_lat_deg, CS.solar_lon_deg, Time, 0.0);
-                        const double cosz = sp.cosZ;
-                        if (!(cosz > 0.0) || !std::isfinite(cosz) || !std::isfinite(sp.azimuth)) {
-                            continue;
-                        }
-
-                        const double cosz_clamped = std::min(1.0, std::max(-1.0, cosz));
-                        const double sinz = std::sqrt(std::max(0.0, 1.0 - cosz_clamped * cosz_clamped));
-                        const double sin_az = std::sin(sp.azimuth);
-                        const double cos_az = std::cos(sp.azimuth);
-
-                        const double sx = sinz * sin_az;
-                        const double sy = sinz * cos_az;
-                        const double sz = cosz_clamped;
-
-                        const double wdt = std::max(0.0, cosz_clamped) * dt_seg; // weight = max(cosZ,0)
-                        if (!(wdt > 0.0) || !std::isfinite(wdt)) {
-                            continue;
-                        }
-
-                        tsr_forcing_sx[(size_t)k] = sx;
-                        tsr_forcing_sy[(size_t)k] = sy;
-                        tsr_forcing_sz[(size_t)k] = sz;
-                        tsr_forcing_wdt[(size_t)k] = wdt;
-                        tsr_forcing_den += wdt;
-                    }
-                }
-
-                if (tsr_factor_bucket != nullptr && tsr_factor != nullptr) {
-                    if (tsr_factor_bucket[i] != bucket) {
-                        double num = 0.0;
-                        const double cap = CS.rad_factor_cap;
-                        const double cosz_min = CS.rad_cosz_min;
-
-                        if (tsr_forcing_den > 0.0 && tsr_forcing_n > 0) {
-                            const int n = tsr_forcing_n;
-                            const double nx = Ele[i].nx;
-                            const double ny = Ele[i].ny;
-                            const double nz = Ele[i].nz;
-                            for (int k = 0; k < n; k++) {
-                                const double wdt = tsr_forcing_wdt[(size_t)k];
-                                if (!(wdt > 0.0)) {
-                                    continue;
-                                }
-                                const double sx = tsr_forcing_sx[(size_t)k];
-                                const double sy = tsr_forcing_sy[(size_t)k];
-                                const double sz = tsr_forcing_sz[(size_t)k];
-
-                                const double cosi = nx * sx + ny * sy + nz * sz;
-                                if (!(cosi > 0.0) || !std::isfinite(cosi)) {
-                                    continue;
-                                }
-
-                                double denom = sz;
-                                if (denom < cosz_min) {
-                                    denom = cosz_min;
-                                }
-                                if (!(denom > 0.0) || !std::isfinite(denom)) {
-                                    continue;
-                                }
-
-                                double fk = cosi / denom;
-                                if (!std::isfinite(fk) || !(fk > 0.0)) {
-                                    continue;
-                                }
-                                if (fk > cap) {
-                                    fk = cap;
-                                }
-                                num += wdt * fk;
-                            }
-                        }
-
-                        double feff = 0.0;
-                        if (tsr_forcing_den > 0.0) {
-                            feff = num / tsr_forcing_den;
-                            if (!std::isfinite(feff) || !(feff > 0.0)) {
-                                feff = 0.0;
-                            }
-                            if (feff > CS.rad_factor_cap) {
-                                feff = CS.rad_factor_cap;
-                            }
-                        }
-
-                        tsr_factor[i] = feff;
-                        tsr_factor_bucket[i] = bucket;
-                    }
-                    factor = tsr_factor[i];
-                }
-            }
-        } else { /* TSR_INSTANT (default) */
-            int interval_min = CS.solar_update_interval;
-            if (interval_min <= 0) {
-                interval_min = 60;
+        const double t0 = tsd_weather[idx].currentTimeMin();
+        double t1 = tsd_weather[idx].nextTimeMin();
+        if (!std::isfinite(t0)) {
+            factor = 0.0;
+        } else {
+            if (!std::isfinite(t1) || !(t1 > t0)) {
+                // Fall back to a single-step interval if forcing time is not available.
+                t1 = t0 + CS.SolverStep;
             }
 
-            /* Timestamp alignment: left endpoint of SOLAR_UPDATE_INTERVAL bucket */
-            const double bucket_eps = 1.0e-6; /* [min] */
-            const long long bucket = (long long)floor((t + bucket_eps) / (double)interval_min);
-            const double t_aligned = (double)bucket * (double)interval_min;
-            if (bucket != tsr_solar_bucket) {
-                tsr_solar_bucket = bucket;
-                tsr_solar_t_aligned = t_aligned;
-                /*
-                 * TSR 太阳位置近似（Terrain Shortwave Radiation）
-                 * - 使用单个全局太阳位置：来自 B2a 的 solar_lon_deg/solar_lat_deg（CS.solar_lon_deg/lat_deg）
-                 * - 物理假设：流域内太阳位置（高度角/方位角）的空间差异可忽略
-                 * - 适用范围：推荐用于特征长度 <200km 的流域
-                 * - 空间误差估计：<50km 优秀(<1%)；50-200km 可接受(<5%)；>200km 需改进(10-20%)
-                 */
-                // forcing 时间为 UTC；必须显式传入 timezone_hours=0.0
-                // 避免 solarPosition() 根据 lon 推算本地时区（round(lon/15)）导致相位偏移
-                tsr_solar_pos = solarPosition(t_aligned, CS.solar_lat_deg, CS.solar_lon_deg, Time, 0.0);
+            /* Precompute solar samples for this forcing interval (shared across elements). */
+            int dt_int_min = CS.tsr_integration_step_min;
+            if (dt_int_min <= 0) {
+                dt_int_min = 60;
             }
 
+            if (tsr_forcing_bucket < 0 || t0 != tsr_forcing_t0 || t1 != tsr_forcing_t1 ||
+                dt_int_min != tsr_forcing_dt_int_min) {
+                /* Bucket key: unique id per forcing interval (may differ across stations). */
+                tsr_forcing_bucket += 1;
+                tsr_forcing_t0 = t0;
+                tsr_forcing_t1 = t1;
+                tsr_forcing_dt_int_min = dt_int_min;
+
+                const double dt_forc = t1 - t0;
+                double dt_int = (double)dt_int_min;
+                if (dt_int > dt_forc) {
+                    dt_int = dt_forc;
+                }
+
+                int n = (int)std::ceil(dt_forc / dt_int);
+                if (n < 1) {
+                    n = 1;
+                }
+                tsr_forcing_n = n;
+                const double dt_seg = dt_forc / (double)n;
+
+                tsr_forcing_sx.assign((size_t)n, 0.0);
+                tsr_forcing_sy.assign((size_t)n, 0.0);
+                tsr_forcing_sz.assign((size_t)n, 0.0);
+                tsr_forcing_wdt.assign((size_t)n, 0.0);
+                tsr_forcing_den = 0.0;
+
+                for (int k = 0; k < n; k++) {
+                    const double tk = t0 + (k + 0.5) * dt_seg;
+
+                    // forcing 时间为 UTC；必须显式传入 timezone_hours=0.0
+                    // 避免 solarPosition() 根据 lon 推算本地时区（round(lon/15)）导致相位偏移
+                    const SolarPosition sp = solarPosition(tk, CS.solar_lat_deg, CS.solar_lon_deg, Time, 0.0);
+                    const double cosz = sp.cosZ;
+                    if (!(cosz > 0.0) || !std::isfinite(cosz) || !std::isfinite(sp.azimuth)) {
+                        continue;
+                    }
+
+                    const double cosz_clamped = std::min(1.0, std::max(-1.0, cosz));
+                    const double sinz = std::sqrt(std::max(0.0, 1.0 - cosz_clamped * cosz_clamped));
+                    const double sin_az = std::sin(sp.azimuth);
+                    const double cos_az = std::cos(sp.azimuth);
+
+                    const double sx = sinz * sin_az;
+                    const double sy = sinz * cos_az;
+                    const double sz = cosz_clamped;
+
+                    const double wdt = std::max(0.0, cosz_clamped) * dt_seg; // weight = max(cosZ,0)
+                    if (!(wdt > 0.0) || !std::isfinite(wdt)) {
+                        continue;
+                    }
+
+                    tsr_forcing_sx[(size_t)k] = sx;
+                    tsr_forcing_sy[(size_t)k] = sy;
+                    tsr_forcing_sz[(size_t)k] = sz;
+                    tsr_forcing_wdt[(size_t)k] = wdt;
+                    tsr_forcing_den += wdt;
+                }
+            }
+
+            const long long bucket = tsr_forcing_bucket;
             if (tsr_factor_bucket != nullptr && tsr_factor != nullptr) {
                 if (tsr_factor_bucket[i] != bucket) {
-                    tsr_factor[i] = terrainFactor(Ele[i].nx,
-                                                  Ele[i].ny,
-                                                  Ele[i].nz,
-                                                  tsr_solar_pos,
-                                                  CS.rad_factor_cap,
-                                                  CS.rad_cosz_min);
+                    double num = 0.0;
+                    const double cap = CS.rad_factor_cap;
+                    const double cosz_min = CS.rad_cosz_min;
+
+                    if (tsr_forcing_den > 0.0 && tsr_forcing_n > 0) {
+                        const int n = tsr_forcing_n;
+                        const double nx = Ele[i].nx;
+                        const double ny = Ele[i].ny;
+                        const double nz = Ele[i].nz;
+                        for (int k = 0; k < n; k++) {
+                            const double wdt = tsr_forcing_wdt[(size_t)k];
+                            if (!(wdt > 0.0)) {
+                                continue;
+                            }
+                            const double sx = tsr_forcing_sx[(size_t)k];
+                            const double sy = tsr_forcing_sy[(size_t)k];
+                            const double sz = tsr_forcing_sz[(size_t)k];
+
+                            const double cosi = nx * sx + ny * sy + nz * sz;
+                            if (!(cosi > 0.0) || !std::isfinite(cosi)) {
+                                continue;
+                            }
+
+                            double denom = sz;
+                            if (denom < cosz_min) {
+                                denom = cosz_min;
+                            }
+                            if (!(denom > 0.0) || !std::isfinite(denom)) {
+                                continue;
+                            }
+
+                            double fk = cosi / denom;
+                            if (!std::isfinite(fk) || !(fk > 0.0)) {
+                                continue;
+                            }
+                            if (fk > cap) {
+                                fk = cap;
+                            }
+                            num += wdt * fk;
+                        }
+                    }
+
+                    double feff = 0.0;
+                    if (tsr_forcing_den > 0.0) {
+                        feff = num / tsr_forcing_den;
+                        if (!std::isfinite(feff) || !(feff > 0.0)) {
+                            feff = 0.0;
+                        }
+                        if (feff > CS.rad_factor_cap) {
+                            feff = CS.rad_factor_cap;
+                        }
+                    }
+
+                    tsr_factor[i] = feff;
                     tsr_factor_bucket[i] = bucket;
                 }
                 factor = tsr_factor[i];

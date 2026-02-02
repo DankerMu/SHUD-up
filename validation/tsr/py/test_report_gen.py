@@ -16,7 +16,7 @@ if str(_THIS_DIR) not in sys.path:
 
 import compare_tsr  # noqa: E402
 from generate_report import generate_report, main as report_main  # noqa: E402
-from tsr_core import TimeContext, read_mesh_normals, solar_position, solar_update_bucket, terrain_factor  # noqa: E402
+from tsr_core import TimeContext, forcing_interval_factor, read_mesh_normals  # noqa: E402
 
 
 def _write_dat(
@@ -80,7 +80,7 @@ def _write_para(path: Path) -> None:
                 "SOLAR_LONLAT_MODE FIXED",
                 "SOLAR_LON_DEG 0.0",
                 "SOLAR_LAT_DEG 0.0",
-                "SOLAR_UPDATE_INTERVAL 60",
+                "TSR_INTEGRATION_STEP_MIN 60",
                 "RAD_FACTOR_CAP 5.0",
                 "RAD_COSZ_MIN 0.05",
                 "",
@@ -90,14 +90,14 @@ def _write_para(path: Path) -> None:
     )
 
 
-def _write_forc(path: Path, *, forc_start: int) -> None:
+def _write_forc(path: Path, *, forc_start: int, base_dir: Path, filename: str) -> None:
     path.write_text(
         "\n".join(
             [
                 f"1 {float(forc_start):.0f}",
-                "/dev/null",
-                "ID Lon Lat",
-                "1 0.0 0.0",
+                str(base_dir),
+                "ID Lon Lat X Y Z Filename",
+                f"1 0.0 0.0 0 0 -9999 {filename}",
                 "",
             ]
         ),
@@ -136,13 +136,29 @@ def _build_case(
     shud = out_dir / f"{case}.SHUD"
     _write_mesh(mesh)
     _write_para(para)
-    _write_forc(forc, forc_start=start_yyyymmdd)
+    forcing_csv = base_dir / "forcing.csv"
+    forcing_csv.write_text(
+        "\n".join(
+            [
+                "5 6 20000101 20000102",
+                "Time_Day APCP TMP SPFH UGRD DSWRF",
+                "0 0 0 0 0 0",
+                f"{60.0/1440.0} 0 0 0 0 0",
+                f"{120.0/1440.0} 0 0 0 0 0",
+                "0.5 0 0 0 0 0",  # 720 min
+                f"{780.0/1440.0} 0 0 0 0 0",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _write_forc(forc, forc_start=start_yyyymmdd, base_dir=base_dir, filename=forcing_csv.name)
     _write_shud(shud, mesh=mesh, para=para, forc=forc)
 
     normals = read_mesh_normals(mesh)
     normals_selected = [normals[1], normals[2]]
     tc = TimeContext(start_yyyymmdd)
-    solar_update_interval = 60
     lat = 0.0
     lon = 0.0
     cap = 5.0
@@ -154,10 +170,28 @@ def _build_case(
     rn_t_rows: list[list[float]] = []
     etp_rows: list[list[float]] = []
     for t in times:
-        _, t_aligned = solar_update_bucket(t, solar_update_interval)
-        sp = solar_position(t_aligned, lat, lon, tc, timezone_hours=0.0)
-        row_factor = [terrain_factor(nx, ny, nz, sp, cap, cosz_min) for (nx, ny, nz) in normals_selected]
-        rn_h = max(0.0, float(sp.cosZ)) * 100.0
+        t0, t1 = compare_tsr._forcing_interval(  # noqa: SLF001
+            station_times_min=[0.0, 60.0, 120.0, 720.0, 780.0],
+            t_min=t,
+        )
+        row_factor = [
+            forcing_interval_factor(
+                nx,
+                ny,
+                nz,
+                t0_min=t0,
+                t1_min=t1,
+                lat_deg=lat,
+                lon_deg=lon,
+                tc=tc,
+                cap=cap,
+                cosz_min=cosz_min,
+                dt_int_min=60,
+                timezone_hours=0.0,
+            )
+            for (nx, ny, nz) in normals_selected
+        ]
+        rn_h = 100.0
         row_rn_h = [rn_h, rn_h]
         row_rn_t = [h * f for h, f in zip(row_rn_h, row_factor)]
         row_etp = [0.01 * v for v in row_rn_t]
@@ -171,7 +205,7 @@ def _build_case(
         # 1) NaN/Inf: inject NaN in rn_factor at t=0, ele=1.
         factor_rows[0][0] = float("nan")
         rn_t_rows[0][0] = float("nan")
-        # 2) Night!=0: inject non-zero at night for ele=2.
+        # 2) NoDaylight!=0: inject non-zero during a no-daylight interval for ele=2.
         factor_rows[0][1] = 0.1
         rn_t_rows[0][1] = rn_h_rows[0][1] * factor_rows[0][1]
         # 3) Horizontal!=1: inject deviation for horizontal ele=1 at midday.
@@ -249,13 +283,13 @@ class TestReportGeneration(unittest.TestCase):
             out_dir = _build_case(Path(td), with_anomalies=True)
             artifacts = generate_report(out_dir, sample_elements=[1, 2], tolerance=1e-6, max_anomalies=50)
 
-            self.assertGreater(artifacts.anomaly_counts.get("Night!=0", 0), 0)
+            self.assertGreater(artifacts.anomaly_counts.get("NoDaylight!=0", 0), 0)
             self.assertGreater(artifacts.anomaly_counts.get("Horizontal!=1", 0), 0)
             self.assertGreater(artifacts.anomaly_counts.get("NaN/Inf:rn_factor", 0), 0)
 
             text = artifacts.markdown_path.read_text(encoding="utf-8")
             self.assertIn("## 异常列表", text)
-            self.assertIn("Night!=0", text)
+            self.assertIn("NoDaylight!=0", text)
             self.assertIn("Horizontal!=1", text)
             self.assertIn("NaN/Inf:rn_factor", text)
 

@@ -37,8 +37,8 @@
 ### 1.4 TSR 配置（本次 TSR=ON 运行）
 
 - `TERRAIN_RADIATION=1`
-- `TSR_FACTOR_MODE=FORCING_INTERVAL`（forcing 区间等效 TSR 因子；对逐日短波 forcing 尤其关键）
 - `TSR_INTEGRATION_STEP_MIN=60`
+  - 说明：当前 TSR 使用 **forcing 区间等效 TSR 因子**（对逐日短波 forcing 尤其关键），区间内按该步长采样。
 
 ---
 

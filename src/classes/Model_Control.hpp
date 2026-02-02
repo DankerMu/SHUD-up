@@ -32,20 +32,6 @@ static inline const char* SolarLonLatModeName(SolarLonLatMode mode)
     }
 }
 
-enum TsrFactorMode {
-    TSR_INSTANT = 0,
-    TSR_FORCING_INTERVAL = 1
-};
-
-static inline const char *TsrFactorModeName(TsrFactorMode mode)
-{
-    switch (mode) {
-        case TSR_INSTANT:          return "INSTANT";
-        case TSR_FORCING_INTERVAL: return "FORCING_INTERVAL";
-        default:                   return "UNKNOWN";
-    }
-}
-
 class Print_Ctrl{
 private:
     char    filename[MAXLEN];
@@ -172,16 +158,11 @@ public:
 
     /* Terrain solar radiation (TSR) correction */
     int terrain_radiation = 0;     /* TERRAIN_RADIATION: 0/1 */
-    int solar_update_interval = 60; /* SOLAR_UPDATE_INTERVAL [min] */
     double rad_factor_cap = 5.0;    /* RAD_FACTOR_CAP: upper bound for TSR factor */
     double rad_cosz_min = 0.05;     /* RAD_COSZ_MIN: lower bound for cosZ in TSR denominator */
 
-    /* TSR factor semantics */
-    TsrFactorMode tsr_factor_mode = TSR_INSTANT; /* TSR_FACTOR_MODE:
-                                                    INSTANT (default): factor from solar geometry at a single timestamp bucket
-                                                    FORCING_INTERVAL: effective factor over forcing interval [t0,t1)
-                                                  */
-    int tsr_integration_step_min = 60; /* TSR_INTEGRATION_STEP_MIN [min] (used when TSR_FACTOR_MODE=FORCING_INTERVAL) */
+    /* TSR forcing-interval equivalent factor (always on when TERRAIN_RADIATION=1) */
+    int tsr_integration_step_min = 60; /* TSR_INTEGRATION_STEP_MIN [min] */
     
     double StartTime = 0.;      /* Start time of simulation [min]*/
     double EndTime = 14400;     /* End time of simulation [min]*/

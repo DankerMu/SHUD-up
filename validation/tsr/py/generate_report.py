@@ -158,27 +158,26 @@ def _count_and_collect_nonfinite(
     return n_bad, items
 
 
-def _count_and_collect_night_nonzero(
+def _count_and_collect_no_daylight_nonzero(
     *,
     times: list[float],
     col_ids: list[int],
-    cosz: np.ndarray,
-    cosz_threshold: float,
+    den: np.ndarray,
     factor_cpp: np.ndarray,
     rn_t_cpp: np.ndarray,
     tol: float,
     max_items: int,
 ) -> tuple[int, list[dict[str, str]]]:
-    night = cosz < float(cosz_threshold)
-    if not bool(np.any(night)):
+    no_daylight = den <= 0.0
+    if not bool(np.any(no_daylight)):
         return 0, []
-    f_bad = np.abs(factor_cpp[night, :]) > float(tol)
-    r_bad = np.abs(rn_t_cpp[night, :]) > float(tol)
+    f_bad = np.abs(factor_cpp[no_daylight, :]) > float(tol)
+    r_bad = np.abs(rn_t_cpp[no_daylight, :]) > float(tol)
     bad = f_bad | r_bad
     n_bad = int(bad.sum())
     if n_bad == 0:
         return 0, []
-    time_idx = np.nonzero(night)[0]
+    time_idx = np.nonzero(no_daylight)[0]
     idx = np.argwhere(bad)
     items: list[dict[str, str]] = []
     for ii, jj in idx[:max_items]:
@@ -188,12 +187,12 @@ def _count_and_collect_night_nonzero(
         eid = int(col_ids[j])
         items.append(
             {
-                "type": "Night!=0",
+                "type": "NoDaylight!=0",
                 "var": "rn_factor/rn_t",
                 "time_min": f"{t:g}",
                 "element": str(eid),
-                "value": f"factor={factor_cpp[i, j]:.6g}, rn_t={rn_t_cpp[i, j]:.6g}, cosZ={cosz[i]:.6g}",
-                "detail": f"cosZ<{cosz_threshold:g} but abs(value)>{tol:g}",
+                "value": f"factor={factor_cpp[i, j]:.6g}, rn_t={rn_t_cpp[i, j]:.6g}, den={den[i]:.6g}",
+                "detail": f"no daylight (den<=0) but abs(value)>{tol:g}",
             }
         )
     return n_bad, items
@@ -203,7 +202,7 @@ def _count_and_collect_horizontal_factor(
     *,
     times: list[float],
     col_ids: list[int],
-    cosz: np.ndarray,
+    min_sz: np.ndarray,
     cosz_threshold: float,
     normals: list[tuple[float, float, float]],
     factor_cpp: np.ndarray,
@@ -227,7 +226,8 @@ def _count_and_collect_horizontal_factor(
     if not bool(np.any(horiz)):
         return 0, []
 
-    day = cosz >= float(cosz_threshold)
+    # Only check intervals where *all* included solar samples satisfy cosZ >= cosz_threshold.
+    day = min_sz >= float(cosz_threshold)
     if not bool(np.any(day)):
         return 0, []
 
@@ -252,7 +252,7 @@ def _count_and_collect_horizontal_factor(
                 "var": "rn_factor",
                 "time_min": f"{t:g}",
                 "element": str(eid),
-                "value": f"factor={factor_cpp[i, col]:.6g}, cosZ={cosz[i]:.6g}, nz={nz[col]:.6g}",
+                "value": f"factor={factor_cpp[i, col]:.6g}, min_sz={min_sz[i]:.6g}, nz={nz[col]:.6g}",
                 "detail": f"horizontal (nz≈1) but abs(factor-1)>{tol:g}",
             }
         )
@@ -357,9 +357,14 @@ def generate_report(
     )
     lon_fixed = compare_tsr._parse_float(para_kv, "SOLAR_LON_DEG", float(compare_tsr.NA_VALUE))  # noqa: SLF001
     lat_fixed = compare_tsr._parse_float(para_kv, "SOLAR_LAT_DEG", float(compare_tsr.NA_VALUE))  # noqa: SLF001
-    solar_update_interval = compare_tsr._parse_int(  # noqa: SLF001
-        para_kv, "SOLAR_UPDATE_INTERVAL", compare_tsr.DEFAULT_SOLAR_UPDATE_INTERVAL_MIN
+    tsr_integration_step_min = compare_tsr._parse_int(  # noqa: SLF001
+        para_kv, "TSR_INTEGRATION_STEP_MIN", compare_tsr.DEFAULT_TSR_INTEGRATION_STEP_MIN
     )
+    if "TSR_INTEGRATION_STEP_MIN" not in para_kv and "SOLAR_UPDATE_INTERVAL" in para_kv:
+        # Deprecated alias kept for backward compatibility.
+        tsr_integration_step_min = compare_tsr._parse_int(  # noqa: SLF001
+            para_kv, "SOLAR_UPDATE_INTERVAL", compare_tsr.DEFAULT_TSR_INTEGRATION_STEP_MIN
+        )
     rad_factor_cap = compare_tsr._parse_float(  # noqa: SLF001
         para_kv, "RAD_FACTOR_CAP", compare_tsr.DEFAULT_RAD_FACTOR_CAP
     )
@@ -391,23 +396,58 @@ def generate_report(
         raise ReportError(f"mesh missing element id referenced by output: {e}") from e
 
     tc = compare_tsr.TimeContext(start_time_dat)
-    cosz: list[float] = []
+    no_daylight_den: list[float] = []
+    min_sz_in_interval: list[float] = []
     factor_py_rows: list[list[float]] = []
     rn_t_py_rows: list[list[float]] = []
+
+    station_files = compare_tsr._read_forcing_station_files(forc_list=forc_path, repo_root=repo_root)  # noqa: SLF001
+    if not station_files:
+        raise ReportError(f"no forcing station files listed in {forc_path}")
+    station_times_min = compare_tsr._read_station_times_min(station_files[0])  # noqa: SLF001
+
+    cached_interval: Optional[tuple[float, float, int]] = None
+    cached_samples: list[tuple[float, float, float, float]] = []
+    cached_den = 0.0
+    cached_min_sz = -1.0
+
     for i, t in enumerate(times_f):
-        _, t_aligned = compare_tsr.solar_update_bucket(t, solar_update_interval)
-        sp = compare_tsr.solar_position(t_aligned, solar_lat_deg, solar_lon_deg, tc, timezone_hours=0.0)
-        cosz.append(float(sp.cosZ))
+        t0, t1 = compare_tsr._forcing_interval(station_times_min=station_times_min, t_min=t)  # noqa: SLF001
+        key = (t0, t1, int(tsr_integration_step_min))
+        if cached_interval != key:
+            cached_interval = key
+            cached_samples, cached_den = compare_tsr._solar_samples_for_interval(  # noqa: SLF001
+                t0_min=t0,
+                t1_min=t1,
+                dt_int_min=int(tsr_integration_step_min),
+                lat_deg=solar_lat_deg,
+                lon_deg=solar_lon_deg,
+                tc=tc,
+            )
+            cached_min_sz = min((float(sz) for _, _, sz, _ in cached_samples), default=-1.0)
+
+        no_daylight_den.append(float(cached_den))
+        min_sz_in_interval.append(float(cached_min_sz))
 
         row_factor = [
-            compare_tsr.terrain_factor(nx, ny, nz, sp, rad_factor_cap, rad_cosz_min) for (nx, ny, nz) in normals_selected
+            compare_tsr._factor_from_samples(  # noqa: SLF001
+                nx=nx,
+                ny=ny,
+                nz=nz,
+                samples=cached_samples,
+                den=cached_den,
+                cap=rad_factor_cap,
+                cosz_min=rad_cosz_min,
+            )
+            for (nx, ny, nz) in normals_selected
         ]
         factor_py_rows.append(row_factor)
         rn_t_py_rows.append([h * f for h, f in zip(rn_h_cpp[i, :].tolist(), row_factor)])
 
     factor_py = np.asarray(factor_py_rows, dtype=float)
     rn_t_py = np.asarray(rn_t_py_rows, dtype=float)
-    cosz_np = np.asarray(cosz, dtype=float)
+    den_np = np.asarray(no_daylight_den, dtype=float)
+    min_sz_np = np.asarray(min_sz_in_interval, dtype=float)
 
     metrics = [
         _metric_row("rn_factor", factor_cpp, factor_py),
@@ -424,23 +464,22 @@ def generate_report(
         anomaly_counts[f"NaN/Inf:{var_name}"] = c
         anomaly_items.extend(items)
 
-    night_c, night_items = _count_and_collect_night_nonzero(
+    nodl_c, nodl_items = _count_and_collect_no_daylight_nonzero(
         times=times_f,
         col_ids=col_ids,
-        cosz=cosz_np,
-        cosz_threshold=rad_cosz_min,
+        den=den_np,
         factor_cpp=factor_cpp,
         rn_t_cpp=rn_t_cpp,
         tol=tolerance,
         max_items=max_anomalies,
     )
-    anomaly_counts["Night!=0"] = night_c
-    anomaly_items.extend(night_items)
+    anomaly_counts["NoDaylight!=0"] = nodl_c
+    anomaly_items.extend(nodl_items)
 
     horiz_c, horiz_items = _count_and_collect_horizontal_factor(
         times=times_f,
         col_ids=col_ids,
-        cosz=cosz_np,
+        min_sz=min_sz_np,
         cosz_threshold=rad_cosz_min,
         normals=normals_selected,
         factor_cpp=factor_cpp,
@@ -562,13 +601,13 @@ def generate_report(
     lines.append("## 结论与下一步建议")
     lines.append("")
     ok = all(m.max_abs <= float(tolerance) for m in metrics)
-    if ok and (night_c == 0) and (horiz_c == 0) and all(v == 0 for v in anomaly_counts.values()):
+    if ok and all(v == 0 for v in anomaly_counts.values()):
         lines.append(f"- 结论: `PASS`（关键变量误差 <= {tolerance:g}，且未发现物理约束异常）")
     else:
         lines.append("- 结论: `CHECK`（存在误差或异常项，建议按下方步骤排查）")
     lines.append("- 建议:")
     lines.append("  - 先运行 `python3 validation/tsr/py/compare_tsr.py <output_dir> --tol <tolerance>` 复核点位误差")
-    lines.append("  - 若出现 Night!=0：检查 `RAD_COSZ_MIN` 与输出频率/对齐逻辑（`SOLAR_UPDATE_INTERVAL`）")
+    lines.append("  - 若出现 NoDaylight!=0：检查 solar 几何/经纬度与 forcing 时间序列的区间边界是否正确")
     lines.append("  - 若出现 Horizontal!=1：检查 mesh 法向量计算/归一化与 `RAD_FACTOR_CAP`")
     lines.append("  - 若出现 NaN/Inf：优先查看对应输出文件与 `run.log`")
     lines.append("")
@@ -581,7 +620,7 @@ def generate_report(
     lines.append(f"SOLAR_LONLAT_MODE={mode}")
     lines.append(f"solar_lon_deg={solar_lon_deg:.10f}")
     lines.append(f"solar_lat_deg={solar_lat_deg:.10f}")
-    lines.append(f"solar_update_interval_min={solar_update_interval}")
+    lines.append(f"TSR_INTEGRATION_STEP_MIN={int(tsr_integration_step_min)}")
     lines.append(f"RAD_FACTOR_CAP={rad_factor_cap:g}")
     lines.append(f"RAD_COSZ_MIN={rad_cosz_min:g}")
     lines.append("```")

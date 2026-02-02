@@ -48,11 +48,9 @@ void Model_Data::modelSummary(int end){
     screeninfo("\tSolar lon_deg: %.6f\n", CS.solar_lon_deg);
     screeninfo("\tSolar lat_deg: %.6f\n", CS.solar_lat_deg);
     screeninfo("\tTerrain radiation (TSR): %s\n", CS.terrain_radiation ? "ON" : "OFF");
-    screeninfo("\tSolar update interval: %d min\n", CS.solar_update_interval);
     screeninfo("\tRAD_FACTOR_CAP: %.6f\n", CS.rad_factor_cap);
     screeninfo("\tRAD_COSZ_MIN: %.6f\n", CS.rad_cosz_min);
-    screeninfo("\tTSR factor mode: %s\n", TsrFactorModeName(CS.tsr_factor_mode));
-    if (CS.tsr_factor_mode == TSR_FORCING_INTERVAL) {
+    if (CS.terrain_radiation) {
         screeninfo("\tTSR integration step: %d min\n", CS.tsr_integration_step_min);
     }
     sprintf(str,"\tSize of model: \tNcell = %d \tNriver = %d\t NSeg = %d", NumEle, NumRiv, NumSegmt);
@@ -185,9 +183,6 @@ void Model_Data::malloc_EleRiv(){
         tsr_factor[i] = 1.0;
         tsr_factor_bucket[i] = -1;
     }
-    tsr_solar_bucket = -1;
-    tsr_solar_t_aligned = NA_VALUE;
-    tsr_solar_pos = SolarPosition{};
     tsr_forcing_bucket = -1;
     tsr_forcing_t0 = NA_VALUE;
     tsr_forcing_t1 = NA_VALUE;

@@ -21,7 +21,8 @@
 **现状：已实现（可用）**
 
 - **开关**：`TERRAIN_RADIATION`（0/1），在参数文件中配置后生效。
-- **太阳位置更新间隔**：`SOLAR_UPDATE_INTERVAL`（分钟）；太阳位置与因子缓存按时间桶更新。
+- **forcing 区间等效因子**：TSR 因子按 forcing 记录区间 `[t0,t1)` 计算，并在该 forcing 区间内复用（避免 coarse forcing 下“夜间 factor=0”稀释区间效应）。
+- **区间内采样步长**：`TSR_INTEGRATION_STEP_MIN`（分钟）；控制 `[t0,t1)` 内太阳几何采样的步长（逐日短波 forcing 默认 60 分钟即 24 个采样点）。
 - **数值边界参数**：
   - `RAD_FACTOR_CAP`：TSR 因子上限（防止极端几何导致放大过大）
   - `RAD_COSZ_MIN`：分母 `cosZ` 的下限截断（避免日出/日落附近数值发散）

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import math
 import sys
 from dataclasses import dataclass
@@ -14,12 +15,10 @@ from tsr_core import (
     TimeContext,
     read_mesh_normals,
     solar_position,
-    solar_update_bucket,
-    terrain_factor,
 )
 
 
-DEFAULT_SOLAR_UPDATE_INTERVAL_MIN = 60
+DEFAULT_TSR_INTEGRATION_STEP_MIN = 60
 DEFAULT_RAD_FACTOR_CAP = 5.0
 DEFAULT_RAD_COSZ_MIN = 0.05
 DEFAULT_SOLAR_LONLAT_MODE = "FORCING_FIRST"
@@ -120,6 +119,165 @@ def _parse_float(m: dict[str, str], key: str, default: float) -> float:
         return float(raw)
     except Exception:
         return default
+
+
+def _read_forcing_station_files(*, forc_list: Path, repo_root: Path) -> list[Path]:
+    if not forc_list.exists():
+        raise CompareError(f"missing forcing list file: {forc_list}")
+
+    lines = forc_list.read_text(encoding="utf-8", errors="replace").splitlines()
+    if len(lines) < 3:
+        raise CompareError(f"forcing list file too short: {forc_list}")
+
+    base_raw = lines[1].strip()
+    if not base_raw:
+        raise CompareError(f"invalid forcing list basepath line: {lines[1]!r}")
+    base_dir = _resolve_repo_path(repo_root, base_raw)
+
+    files: list[Path] = []
+    for raw in lines[3:]:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        cols = line.split()
+        if len(cols) < 1:
+            continue
+        fname = cols[-1]
+        if not fname or fname.upper() == "FILENAME":
+            continue
+        p = Path(fname)
+        if not p.is_absolute():
+            p = (base_dir / p).resolve()
+        files.append(p)
+    return files
+
+
+def _read_station_times_min(path: Path) -> list[float]:
+    if not path.exists():
+        raise CompareError(f"missing forcing station file: {path}")
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if len(lines) < 3:
+        raise CompareError(f"forcing station file too short: {path}")
+
+    times: list[float] = []
+    for raw in lines[2:]:  # skip 2 header lines
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        cols = line.split()
+        if not cols:
+            continue
+        try:
+            t_day = float(cols[0])
+        except Exception:
+            continue
+        times.append(t_day * 1440.0)
+    if not times:
+        raise CompareError(f"no time records found in forcing station file: {path}")
+    return times
+
+
+def _forcing_interval(*, station_times_min: list[float], t_min: float) -> tuple[float, float]:
+    # Mirrors _TimeSeriesData::movePointer(): advance when t >= next_time.
+    eps = 1.0e-9
+    j = bisect.bisect_right(station_times_min, float(t_min) + eps) - 1
+    if j < 0:
+        j = 0
+    t0 = float(station_times_min[j])
+    if j + 1 < len(station_times_min):
+        t1 = float(station_times_min[j + 1])
+    else:
+        # Fallback: repeat the last interval length if possible.
+        dt = float(station_times_min[-1] - station_times_min[-2]) if len(station_times_min) >= 2 else 60.0
+        t1 = t0 + dt
+    return t0, t1
+
+
+def _solar_samples_for_interval(
+    *,
+    t0_min: float,
+    t1_min: float,
+    dt_int_min: int,
+    lat_deg: float,
+    lon_deg: float,
+    tc: TimeContext,
+) -> tuple[list[tuple[float, float, float, float]], float]:
+    """
+    Precompute (sx, sy, sz, wdt) samples for forcing interval [t0, t1).
+    wdt = max(cosZ,0) * dt_seg to match C++ weighting.
+    """
+    if not (math.isfinite(t0_min) and math.isfinite(t1_min) and t1_min > t0_min):
+        return [], 0.0
+    if dt_int_min <= 0:
+        dt_int_min = DEFAULT_TSR_INTEGRATION_STEP_MIN
+
+    dt_forc = float(t1_min - t0_min)
+    dt_int = min(float(dt_int_min), dt_forc)
+    n = int(math.ceil(dt_forc / dt_int)) if dt_int > 0.0 else 1
+    if n < 1:
+        n = 1
+    dt_seg = dt_forc / float(n)
+
+    samples: list[tuple[float, float, float, float]] = []
+    den = 0.0
+    for k in range(n):
+        tk = float(t0_min + (k + 0.5) * dt_seg)
+        sp = solar_position(tk, lat_deg, lon_deg, tc, timezone_hours=0.0)
+        cosz = float(sp.cosZ)
+        if not (cosz > 0.0) or (not math.isfinite(cosz)) or (not math.isfinite(sp.azimuth)):
+            continue
+        cosz_clamped = min(1.0, max(-1.0, cosz))
+        sinz = math.sqrt(max(0.0, 1.0 - cosz_clamped * cosz_clamped))
+        sx = sinz * math.sin(sp.azimuth)
+        sy = sinz * math.cos(sp.azimuth)
+        sz = cosz_clamped
+        wdt = max(0.0, cosz_clamped) * dt_seg
+        if not (wdt > 0.0) or (not math.isfinite(wdt)):
+            continue
+        samples.append((sx, sy, sz, wdt))
+        den += wdt
+    return samples, den
+
+
+def _factor_from_samples(
+    *,
+    nx: float,
+    ny: float,
+    nz: float,
+    samples: list[tuple[float, float, float, float]],
+    den: float,
+    cap: float,
+    cosz_min: float,
+) -> float:
+    if not (den > 0.0) or not samples:
+        return 0.0
+    if not math.isfinite(cap) or cap < 0.0:
+        cap = 0.0 if math.isfinite(cap) else 10.0
+    if (not math.isfinite(cosz_min)) or cosz_min < 0.0:
+        cosz_min = 0.0
+    cosz_min = min(1.0, max(0.0, cosz_min))
+
+    num = 0.0
+    for sx, sy, sz, wdt in samples:
+        cosi = nx * sx + ny * sy + nz * sz
+        if not (cosi > 0.0) or (not math.isfinite(cosi)):
+            continue
+        denom = sz
+        if denom < cosz_min:
+            denom = cosz_min
+        if not (denom > 0.0) or (not math.isfinite(denom)):
+            continue
+        fk = cosi / denom
+        if (not math.isfinite(fk)) or (not (fk > 0.0)):
+            continue
+        if fk > cap:
+            fk = cap
+        num += wdt * fk
+
+    feff = num / den
+    if (not math.isfinite(feff)) or (not (feff > 0.0)):
+        return 0.0
+    return float(feff)
 
 
 def _read_forcing_list(path: Path) -> tuple[int, int, list[tuple[float, float]]]:
@@ -327,9 +485,10 @@ def main(argv: list[str]) -> int:
         lon_fixed = _parse_float(para_kv, "SOLAR_LON_DEG", float(NA_VALUE))
         lat_fixed = _parse_float(para_kv, "SOLAR_LAT_DEG", float(NA_VALUE))
 
-        solar_update_interval = _parse_int(
-            para_kv, "SOLAR_UPDATE_INTERVAL", DEFAULT_SOLAR_UPDATE_INTERVAL_MIN
-        )
+        # TSR integration step (minutes). SOLAR_UPDATE_INTERVAL is a deprecated alias.
+        tsr_integration_step_min = _parse_int(para_kv, "TSR_INTEGRATION_STEP_MIN", DEFAULT_TSR_INTEGRATION_STEP_MIN)
+        if "TSR_INTEGRATION_STEP_MIN" not in para_kv and "SOLAR_UPDATE_INTERVAL" in para_kv:
+            tsr_integration_step_min = _parse_int(para_kv, "SOLAR_UPDATE_INTERVAL", DEFAULT_TSR_INTEGRATION_STEP_MIN)
         rad_factor_cap = _parse_float(para_kv, "RAD_FACTOR_CAP", DEFAULT_RAD_FACTOR_CAP)
         rad_cosz_min = _parse_float(para_kv, "RAD_COSZ_MIN", DEFAULT_RAD_COSZ_MIN)
 
@@ -337,6 +496,11 @@ def main(argv: list[str]) -> int:
         solar_lon_deg, solar_lat_deg = _select_solar_lonlat(
             mode=mode, stations=stations, lon_fixed=lon_fixed, lat_fixed=lat_fixed
         )
+
+        station_files = _read_forcing_station_files(forc_list=forc_path, repo_root=repo_root)
+        if not station_files:
+            raise CompareError(f"no forcing station files listed in {forc_path}")
+        station_times_min = _read_station_times_min(station_files[0])
 
         # Read C++ outputs.
         times_f, factor_cpp, col_ids = _read_matrix(rn_factor_path)
@@ -365,11 +529,32 @@ def main(argv: list[str]) -> int:
         # Recompute factor and rn_t.
         factor_py: list[list[float]] = []
         rn_t_py: list[list[float]] = []
+        cached_interval: Optional[tuple[float, float, int]] = None
+        cached_samples: list[tuple[float, float, float, float]] = []
+        cached_den = 0.0
         for i, t in enumerate(times_f):
-            _, t_aligned = solar_update_bucket(t, solar_update_interval)
-            sp = solar_position(t_aligned, solar_lat_deg, solar_lon_deg, tc, timezone_hours=0.0)
+            t0, t1 = _forcing_interval(station_times_min=station_times_min, t_min=t)
+            key = (t0, t1, int(tsr_integration_step_min))
+            if cached_interval != key:
+                cached_interval = key
+                cached_samples, cached_den = _solar_samples_for_interval(
+                    t0_min=t0,
+                    t1_min=t1,
+                    dt_int_min=int(tsr_integration_step_min),
+                    lat_deg=solar_lat_deg,
+                    lon_deg=solar_lon_deg,
+                    tc=tc,
+                )
             row_factor = [
-                terrain_factor(nx, ny, nz, sp, rad_factor_cap, rad_cosz_min)
+                _factor_from_samples(
+                    nx=nx,
+                    ny=ny,
+                    nz=nz,
+                    samples=cached_samples,
+                    den=cached_den,
+                    cap=rad_factor_cap,
+                    cosz_min=rad_cosz_min,
+                )
                 for (nx, ny, nz) in normals_selected
             ]
             factor_py.append(row_factor)
@@ -388,7 +573,7 @@ def main(argv: list[str]) -> int:
         print(f"- solar_lon/lat_mode: {mode}")
         print(f"- solar_lon_deg: {solar_lon_deg:.10f}")
         print(f"- solar_lat_deg: {solar_lat_deg:.10f}")
-        print(f"- solar_update_interval_min: {solar_update_interval}")
+        print(f"- tsr_integration_step_min: {int(tsr_integration_step_min)}")
         print(f"- rad_factor_cap: {rad_factor_cap:g}")
         print(f"- rad_cosz_min: {rad_cosz_min:g}")
         print()
@@ -418,4 +603,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main(sys.argv[1:]))
-

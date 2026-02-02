@@ -80,9 +80,8 @@ run_case() {
   fi
   upsert_cfg_kv "$cfg" "TERRAIN_RADIATION" "${tsr_flag}"
 
-  # Key fix: compute TSR factor as forcing-interval equivalent.
+  # TSR uses forcing-interval equivalent factor; tune integration step for coarse forcing if needed.
   if [[ "$tsr_flag" == "1" ]]; then
-    upsert_cfg_kv "$cfg" "TSR_FACTOR_MODE" "FORCING_INTERVAL"
     upsert_cfg_kv "$cfg" "TSR_INTEGRATION_STEP_MIN" "60"
   fi
 
