@@ -34,8 +34,8 @@ validation/tsr/tmp/
 # Allow committing validation scripts (this repo ignores *.sh by default)
 !validation/**/*.sh
 
-# Local generated docs (keep markdown as source of truth)
-docs/water_balance_verification.pdf
+# Local generated docs (keep markdown/figures as source of truth)
+docs/*.pdf
 
 # Python coverage artifacts
 .coverage
@@ -46,6 +46,4 @@ coverage.xml
 *.bak_phase_test
 *.bak_tsr_test
 
-# Local-only docs/analysis (do not push)
-docs/
-post_analysis/
+# Docs/analysis are tracked in this repo; only large derived artifacts are ignored above.
