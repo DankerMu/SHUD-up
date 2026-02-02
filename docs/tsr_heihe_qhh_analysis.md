@@ -102,6 +102,13 @@
 - heihe：![heihe aspect delta](figures/tsr_heihe_qhh/heihe/aspect_delta_timeseries.png)
 - qhh：![qhh aspect delta](figures/tsr_heihe_qhh/qhh/aspect_delta_timeseries.png)
 
+> 注意（避免误读“南坡一定更大”）：
+>
+> - TSR 在 SHUD 里是用几何因子把“水平面短波”换算为“坡面等效短波”：`rn_t = rn_h · factor`。
+> - 对任意时刻，`factor(t) ≈ cos(i)/cosZ`（`cos(i)=n·s` 为坡面入射余弦，`cosZ` 为太阳天顶角余弦）。
+> - 因此 **南向坡面在某些时段完全可能出现 `factor < 1`**，从而 `rn_t(South, TSR)` 小于 “水平面基准”（也就是 Baseline/Flat）。
+>   典型场景是：太阳高度很高（接近头顶）或太阳方位偏离正南时，坡面并不比水平面更“正对太阳”，反而 `cos(i) < cosZ`。
+
 逐 element 的**累计辐射**相对“平面基准”（`rn_h`）的变化（全期积分；`rn_t` vs `rn_h`；单位 MJ/m² 与 %；色标为 `p99(|·|)` 对称截断）：
 
 - heihe：![heihe radiation cumsum delta](figures/tsr_heihe_qhh/heihe/radiation_cumsum_delta_spatial.png)
@@ -213,7 +220,7 @@ $$Residual_{mm} = \frac{Residual_{m^3}}{A_{mesh}} \times 1000$$
 对应时间序列图（Residual + 累计 Residual）：
 
 - heihe：![heihe basin residual](figures/tsr_heihe_qhh/heihe/basin_residual_timeseries.png)
-- qhh：![qhh basin residual](figures/tsr_heihe_qhh/qhh/basin_residual_timeseries.png)
+- qhh：见 §6（qhh 启用 lake module，raw residual 需要加入 `ΔS_lake + E_lake` 才能用于“全域闭合”判断）
 
 **解读（Residual）**
 
@@ -256,11 +263,11 @@ $$Residual(+lake) \approx Residual(raw) + \Delta S_{lake} + E_{lake}$$
 ## 7. 结论摘要
 
 - **heihe**
-  - TSR=ON 后 `rn_factor` 全域中位数约 **0.99**，并产生明确的阴阳坡辐射差异（$\Delta rn_t(S-N) \approx +53.6\ W/m^2$）。
+  - TSR=ON 后 `rn_factor` 全域中位数约 **0.99**；按坡向分组的 `TSR−BASE` 时间均值为：South **+23.33 W/m²**、North **-30.29 W/m²**（对应 South−North ≈ **+53.62 W/m²**）。
   - 全域量级上，TSR 仅小幅降低 ET（累计约 **-23.5 mm**），对应主要表现为 **储量增加（+23.6 mm）** 与很小的 **出口出流增加（+1.5 mm）**。
   - 全域水量平衡 Residual 很小，TSR=ON 与 Baseline 的差异也很小（累计 Residual 从约 -18.1 mm 变为约 -16.5 mm）。
 - **qhh**
-  - 南北向坡面占比很小（各约 5%），flat 面积占比约 83%，因此 TSR 的"阴阳坡辐射差异"难以转化为显著全域水文差异（ET 仅减少 ~9 mm，Qout 基本不变）。
+  - 南北向坡面占比很小（各约 5%），flat 面积占比约 83%；按坡向分组的 `TSR−BASE` 时间均值为：South **+11.69 W/m²**、North **-25.69 W/m²**（South−North ≈ **+37.38 W/m²**），但难以转化为显著全域水文差异（ET 仅减少 ~9 mm，Qout 基本不变）。
   - 全域 Residual 额外纳入 `ΔS_lake + E_lake` 才能做“全域闭合”；加入后累计残差约 **+9 mm**。
 
 ---
