@@ -177,6 +177,46 @@ def _read_station_times_min(path: Path) -> list[float]:
     return times
 
 
+def _read_station_times_and_col(*, path: Path, col: int) -> tuple[list[float], list[float]]:
+    """
+    Read forcing station CSV and return (times_min, values) for the given column index.
+
+    Column indexing matches SHUD's TimeSeriesData layout:
+      - col=0 is Time_Day (converted to minutes)
+      - col>=1 refers to the 1-based forcing variables (i_prcp=1 ... i_rn=5, etc.)
+    """
+    if not path.exists():
+        raise CompareError(f"missing forcing station file: {path}")
+    if col < 0:
+        raise CompareError(f"invalid forcing column index: {col}")
+
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if len(lines) < 3:
+        raise CompareError(f"forcing station file too short: {path}")
+
+    times: list[float] = []
+    vals: list[float] = []
+    for raw in lines[2:]:  # skip 2 header lines
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        cols = line.split()
+        if len(cols) <= col:
+            continue
+        try:
+            t_day = float(cols[0])
+            v = float(cols[col])
+        except Exception:
+            continue
+        times.append(t_day * 1440.0)
+        vals.append(v)
+    if not times:
+        raise CompareError(f"no time records found in forcing station file: {path}")
+    if len(times) != len(vals):
+        raise CompareError(f"forcing parse error: time/value length mismatch in {path}")
+    return times, vals
+
+
 def _forcing_interval(*, station_times_min: list[float], t_min: float) -> tuple[float, float]:
     # Mirrors _TimeSeriesData::movePointer(): advance when t >= next_time.
     eps = 1.0e-9
@@ -500,7 +540,7 @@ def main(argv: list[str]) -> int:
         station_files = _read_forcing_station_files(forc_list=forc_path, repo_root=repo_root)
         if not station_files:
             raise CompareError(f"no forcing station files listed in {forc_path}")
-        station_times_min = _read_station_times_min(station_files[0])
+        station_times_min, station_rn = _read_station_times_and_col(path=station_files[0], col=5)
 
         # Read C++ outputs.
         times_f, factor_cpp, col_ids = _read_matrix(rn_factor_path)
@@ -526,40 +566,96 @@ def main(argv: list[str]) -> int:
 
         tc = TimeContext(start_time_dat)
 
-        # Recompute factor and rn_t.
+        # Output semantics: Print_Ctrl averages values over the output interval and writes
+        # the left endpoint as the timestamp (t_quantized = t_floor - Interval).
+        # For coarse outputs (e.g., daily DT_QE_ET) and sub-daily forcing, rn_factor/rn_h/rn_t
+        # are NOT point samples. We recompute time-averaged values over [t, t+dt_out).
+        dt_out_min = DatReader(rn_factor_path).meta.dt_min
+        if dt_out_min is None or not (dt_out_min > 0.0):
+            if len(times_f) >= 2:
+                dt_out_min = float(times_f[1] - times_f[0])
+            else:
+                raise CompareError("cannot infer output interval dt (need >=2 records or valid dt_min)")
+
+        # Solver step (minutes) controls how often forcing is refreshed in the main loop.
+        solver_step_min = _parse_float(para_kv, "MAX_SOLVER_STEP", float(NA_VALUE))
+        if not (solver_step_min > 0.0) or not math.isfinite(solver_step_min):
+            # Fall back to output interval if MaxStep is missing.
+            solver_step_min = float(dt_out_min)
+
+        # Recompute factor and rn_t as time-averaged series over the output interval.
         factor_py: list[list[float]] = []
         rn_t_py: list[list[float]] = []
         cached_interval: Optional[tuple[float, float, int]] = None
         cached_samples: list[tuple[float, float, float, float]] = []
         cached_den = 0.0
-        for i, t in enumerate(times_f):
-            t0, t1 = _forcing_interval(station_times_min=station_times_min, t_min=t)
-            key = (t0, t1, int(tsr_integration_step_min))
-            if cached_interval != key:
-                cached_interval = key
-                cached_samples, cached_den = _solar_samples_for_interval(
-                    t0_min=t0,
-                    t1_min=t1,
-                    dt_int_min=int(tsr_integration_step_min),
-                    lat_deg=solar_lat_deg,
-                    lon_deg=solar_lon_deg,
-                    tc=tc,
-                )
-            row_factor = [
-                _factor_from_samples(
-                    nx=nx,
-                    ny=ny,
-                    nz=nz,
-                    samples=cached_samples,
-                    den=cached_den,
-                    cap=rad_factor_cap,
-                    cosz_min=rad_cosz_min,
-                )
-                for (nx, ny, nz) in normals_selected
-            ]
-            factor_py.append(row_factor)
+        # Precompute last forcing interval length fallback.
+        dt_last = float(station_times_min[-1] - station_times_min[-2]) if len(station_times_min) >= 2 else 60.0
+        eps = 1.0e-9
 
-            row_rn_t = [h * f for h, f in zip(rn_h_cpp[i], row_factor)]
+        for t in times_f:
+            t_start = float(t)
+            t_end = float(t_start + dt_out_min)
+            if not (t_end > t_start):
+                raise CompareError("non-positive output interval inferred from rn_factor time index")
+
+            sum_factor = [0.0] * len(normals_selected)
+            sum_rn_t = [0.0] * len(normals_selected)
+
+            tcur = t_start
+            while tcur + eps < t_end:
+                j = bisect.bisect_right(station_times_min, float(tcur) + eps) - 1
+                if j < 0:
+                    j = 0
+                t0 = float(station_times_min[j])
+                if j + 1 < len(station_times_min):
+                    t1 = float(station_times_min[j + 1])
+                else:
+                    t1 = t0 + dt_last
+
+                ov_end = t1 if t1 < t_end else t_end
+                w = float(ov_end - tcur)
+                if not (w > 0.0):
+                    break
+
+                rn_h = float(station_rn[j])
+
+                key = (t0, t1, int(tsr_integration_step_min))
+                if cached_interval != key:
+                    cached_interval = key
+                    cached_samples, cached_den = _solar_samples_for_interval(
+                        t0_min=t0,
+                        t1_min=t1,
+                        dt_int_min=int(tsr_integration_step_min),
+                        lat_deg=solar_lat_deg,
+                        lon_deg=solar_lon_deg,
+                        tc=tc,
+                    )
+
+                factors = [
+                    _factor_from_samples(
+                        nx=nx,
+                        ny=ny,
+                        nz=nz,
+                        samples=cached_samples,
+                        den=cached_den,
+                        cap=rad_factor_cap,
+                        cosz_min=rad_cosz_min,
+                    )
+                    for (nx, ny, nz) in normals_selected
+                ]
+
+                wrn = w * rn_h
+                for k, fk in enumerate(factors):
+                    sum_factor[k] += w * fk
+                    sum_rn_t[k] += wrn * fk
+
+                tcur = ov_end
+
+            inv_dt = 1.0 / float(dt_out_min)
+            row_factor = [s * inv_dt for s in sum_factor]
+            row_rn_t = [s * inv_dt for s in sum_rn_t]
+            factor_py.append(row_factor)
             rn_t_py.append(row_rn_t)
 
         stats_factor = _stats(times=times_f, col_ids=col_ids, cpp=factor_cpp, py=factor_py)
@@ -573,6 +669,8 @@ def main(argv: list[str]) -> int:
         print(f"- solar_lon/lat_mode: {mode}")
         print(f"- solar_lon_deg: {solar_lon_deg:.10f}")
         print(f"- solar_lat_deg: {solar_lat_deg:.10f}")
+        print(f"- output_interval_min: {dt_out_min:g}")
+        print(f"- solver_step_min: {solver_step_min:g}")
         print(f"- tsr_integration_step_min: {int(tsr_integration_step_min)}")
         print(f"- rad_factor_cap: {rad_factor_cap:g}")
         print(f"- rad_cosz_min: {rad_cosz_min:g}")

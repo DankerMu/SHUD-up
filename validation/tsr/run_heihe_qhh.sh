@@ -4,6 +4,7 @@ set -euo pipefail
 sd="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${sd}/_common.sh"
+need_cmd python3
 
 write_project_file() {
   local project="$1"
@@ -55,7 +56,7 @@ run_case() {
   local root
   root="$(repo_root)"
 
-  local shud_bin="${root}/shud"
+  local shud_bin="${SHUD_VALIDATION_SHUD_BIN:-${root}/shud}"
   ensure_executable_file "$shud_bin"
 
   local input_src="${root}/input/${project}"
@@ -75,13 +76,33 @@ run_case() {
   [[ -f "$cfg" ]] || die "missing cfg.para in tmp copy: $cfg"
   [[ -f "$forc" ]] || die "missing tsd.forc in tmp copy: $forc"
 
-  if [[ -n "$end_override_days" ]]; then
+  if [[ -n "${SHUD_VALIDATION_DURATION_DAYS:-}" ]]; then
+    # Override END using a duration (END = START + duration).
+    local start_day
+    start_day="$(get_cfg_kv "$cfg" "START")"
+    if [[ -z "$start_day" ]]; then
+      start_day="0"
+    fi
+    local end_day
+    end_day="$(python3 - <<PY
+import math
+start=float("${start_day}")
+dur=float("${SHUD_VALIDATION_DURATION_DAYS}")
+print(f"{start+dur:g}")
+PY
+)"
+    upsert_cfg_kv "$cfg" "END" "$end_day"
+  elif [[ -n "${SHUD_VALIDATION_END_DAYS:-}" ]]; then
+    upsert_cfg_kv "$cfg" "END" "${SHUD_VALIDATION_END_DAYS}"
+  elif [[ -n "$end_override_days" ]]; then
     upsert_cfg_kv "$cfg" "END" "$end_override_days"
   fi
   upsert_cfg_kv "$cfg" "TERRAIN_RADIATION" "${tsr_flag}"
 
   # TSR uses forcing-interval equivalent factor; tune integration step for coarse forcing if needed.
   if [[ "$tsr_flag" == "1" ]]; then
+    # Backward compatible: older binaries require TSR_FACTOR_MODE to opt into forcing-interval.
+    upsert_cfg_kv "$cfg" "TSR_FACTOR_MODE" "FORCING_INTERVAL"
     upsert_cfg_kv "$cfg" "TSR_INTEGRATION_STEP_MIN" "60"
   fi
 
@@ -117,6 +138,9 @@ Options:
   --qhh           Run qhh only
   --baseline-only Run baseline only (TSR=OFF)
   --tsr-only      Run TSR only (TSR=ON)
+  --days N        Run only N days (sets END = START + N)
+  --end DAY       Override END day (absolute day index)
+  --shud-bin PATH Use a specific shud binary (default: ./shud)
   -h, --help      Show this help
 EOF
 }
@@ -139,6 +163,21 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tsr-only)
       run_baseline=0
+      ;;
+    --days)
+      shift
+      [[ $# -gt 0 ]] || die "--days requires a value"
+      export SHUD_VALIDATION_DURATION_DAYS="$1"
+      ;;
+    --end)
+      shift
+      [[ $# -gt 0 ]] || die "--end requires a value"
+      export SHUD_VALIDATION_END_DAYS="$1"
+      ;;
+    --shud-bin)
+      shift
+      [[ $# -gt 0 ]] || die "--shud-bin requires a value"
+      export SHUD_VALIDATION_SHUD_BIN="$1"
       ;;
     -h|--help)
       usage
