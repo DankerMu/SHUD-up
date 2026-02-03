@@ -1,16 +1,31 @@
 # TSR (Terrain Solar Radiation) Technical Reference
 
-本文档详细说明 SHUD v2.1 新增的地形太阳辐射修正模块。
+本文档详细说明 SHUD 的地形太阳辐射修正模块（TSR, Terrain Solar Radiation）的**当前实现**：
+
+- forcing 短波被视为“水平面短波通量（W/m²）”
+- TSR 将其几何修正为“坡面有效入射短波通量（W/m²）”
+- 修正系数按 forcing 的时间间隔（`[t0,t1)`）计算**区间等效因子**，避免“固定 60min bucket”在逐日/粗时间步 forcing 下引入系统误差
 
 ## 1. 物理原理
 
-TSR 模块根据地形坡度、坡向和太阳位置，修正每个单元接收的短波辐射：
+TSR 模块根据地形坡度、坡向和太阳位置，修正每个单元接收的短波辐射。其核心是把“水平面下行短波”换算为“坡面有效入射短波”：
 
 ```
 Rn_terrain = Rn_horizontal × TSR_factor
 ```
 
-其中 TSR_factor 由入射角余弦与太阳高度角余弦的比值决定。
+其中 `TSR_factor` 本质上来自几何关系（同一束太阳光，在坡面与水平面上的投影比值）。
+
+### 1.1 记号与坐标系
+
+- 时间 `t`：以分钟计，`t=0` 对应 forcing 列表文件中的 `ForcStartTime`（yyyymmdd），详见 `src/ModelData/MD_readin.cpp` 与 `src/classes/TimeContext.*`。
+- 坐标系：`x`=East（东）、`y`=North（北）、`z`=Up（天顶）。
+- `n=(nx,ny,nz)`：单元地形面单位法向量（`nz>=0`）。
+- 太阳位置（`SolarPosition`）：
+  - `cosZ = cos(zenith)`：太阳天顶角余弦（水平面的入射余弦）。
+  - `azimuth`：太阳方位角（弧度），定义为 `atan2(east, north)`，范围 `[0,2π)`，即 North=0、East=π/2。
+- 太阳方向单位向量 `s=(sx,sy,sz)`：由 `cosZ` 与 `azimuth` 转换得到（见 §4.2）。
+- 坡面入射余弦：`cos(i) = n · s`。
 
 ## 2. 配置参数
 
@@ -31,7 +46,7 @@ Rn_terrain = Rn_horizontal × TSR_factor
 - `FORCING_MEAN`: 对 forcing 列表中有效经纬度取均值
 - `FIXED`: 使用 `SOLAR_LON_DEG` / `SOLAR_LAT_DEG` 指定值
 
-### TSR 因子语义（当前实现）
+### 2.1 TSR 因子语义（当前实现：forcing-interval 等效）
 
 - TSR 因子按 forcing 的“当前记录区间” `[t0,t1)` 计算一个等效 `TSR_factor`，并在该 forcing 区间内保持常数。
 - 区间等效形式为 cosZ 加权平均：`F_eff = (∫ max(cosZ,0) * f(t) dt) / (∫ max(cosZ,0) dt)`，其中 `f(t)` 仍遵循 `terrainFactor()`（含 `RAD_COSZ_MIN`/`RAD_FACTOR_CAP`）。
@@ -39,7 +54,166 @@ Rn_terrain = Rn_horizontal × TSR_factor
 
 > 兼容性说明：历史参数 `SOLAR_UPDATE_INTERVAL` / `TSR_FACTOR_MODE` 已废弃；若仍出现在配置中会被解析，但不再改变 TSR 的计算方法。
 
-## 3. 诊断输出
+## 3. 地形几何（n 向量）
+
+每个 element 的地形面单位法向量 `n=(nx,ny,nz)` 来自三角形单元的三节点坐标（使用表面高程 `zmax`）：
+
+给定三点 `p1=(x1,y1,z1)`, `p2=(x2,y2,z2)`, `p3=(x3,y3,z3)`：
+
+1. 边向量：`v1=p2−p1`, `v2=p3−p1`
+2. 法向量：`n_raw = v1 × v2`
+3. 单位化：`n = n_raw / ||n_raw||`
+4. 保证 `nz>=0`：若 `nz<0` 则 `n=-n`（使法向量朝上）
+
+对应源码：`src/classes/Element.cpp`。
+
+## 4. 太阳位置（solarPosition）与太阳方向向量
+
+### 4.1 太阳位置输入：时间与经纬度
+
+- 时间基准：`ForcStartTime` 来自 forcing 列表文件（`*.tsd.forc` 第一行），模型把它设置为 `TimeContext` 的基准日期（yyyymmdd）。
+- 经纬度：由 `SOLAR_LONLAT_MODE` 从 forcing 列表（Lon/Lat 列）或固定值选择，并存入 `CS.solar_lon_deg/CS.solar_lat_deg`。
+- **时区**：TSR 明确把 forcing 时间当作 **UTC**，因此在计算 solarPosition 时显式传入 `timezone_hours = 0.0`，避免按经度推断时区（`round(lon/15)`）造成相位偏移。
+
+### 4.2 solarPosition 使用的公式（与 `src/Equations/SolarRadiation.cpp` 一致）
+
+设：
+
+- 纬度 `φ`（rad），经度 `λ`（deg，范围 wrap 到 `[-180,180]`）
+- `doy`：年内第几天（1–366）
+- `hour`：当天小时（`minuteOfDay(t)/60`）
+- `γ`：fractional year（rad）
+- `E`：equation of time（min）
+- `δ`：declination（rad）
+- `tz`：时区（hours；TSR 固定为 0）
+- `TST`：true solar time（min）
+- `ω`：hour angle（rad）
+
+计算：
+
+```
+γ = (2π/365) * ((doy-1) + (hour-12)/24)
+
+E = 229.18 * (0.000075 + 0.001868 cosγ - 0.032077 sinγ
+              - 0.014615 cos2γ - 0.040849 sin2γ)
+
+δ = 0.006918 - 0.399912 cosγ + 0.070257 sinγ
+    - 0.006758 cos2γ + 0.000907 sin2γ
+    - 0.002697 cos3γ + 0.00148  sin3γ
+
+time_offset = E + 4λ - 60 tz
+TST = wrap_1440(minuteOfDay(t) + time_offset)
+ω = deg2rad(TST/4 - 180)
+
+cosZ = sinφ sinδ + cosφ cosδ cosω
+zenith = arccos(cosZ)
+
+east  = -cosδ sinω
+north =  cosφ sinδ - sinφ cosδ cosω
+azimuth = wrap_2π(atan2(east, north))
+```
+
+### 4.3 由 (cosZ, azimuth) 得到太阳方向向量 s
+
+令 `sinZ = sqrt(max(0, 1 - cosZ^2))`，则：
+
+```
+sx = sinZ * sin(azimuth)   # East
+sy = sinZ * cos(azimuth)   # North
+sz = cosZ                  # Up
+```
+
+## 5. 瞬时 TSR 因子 f(t)
+
+对任意时刻 `t`（且太阳在地平线上方），瞬时几何因子 `f(t)` 与 `terrainFactor()` 一致：
+
+1. 坡面入射余弦：`cos(i) = n · s`
+2. 条件与截断：
+
+```
+if cosZ <= 0          -> f(t)=0
+if cos(i) <= 0        -> f(t)=0  # 背光坡
+denom = max(cosZ, RAD_COSZ_MIN)
+f(t) = min( cos(i) / denom, RAD_FACTOR_CAP )
+```
+
+说明：
+
+- `RAD_FACTOR_CAP`：防止在日出/日落附近 `cosZ` 很小导致 `cos(i)/cosZ` 过大。
+- `RAD_COSZ_MIN`：分母下限（默认 0.05，对应 zenith≈87.13°），用于数值稳定；这会导致**极低太阳高度**时即使水平面也可能出现 `f(t)<1`，但此时 `cosZ` 权重很小，对日尺度均值影响通常可忽略。
+
+## 6. forcing 区间等效 TSR 因子 F_eff（当前实现）
+
+### 6.1 forcing 区间定义
+
+weather forcing CSV 的每条记录带有时间戳 `t_k`（以 day 为单位存储，内部转为分钟），模型把该记录视为在区间：
+
+```
+[t_k, t_{k+1})
+```
+
+内保持常数（通过 `TimeSeriesData::movePointer()` 切换到下一条记录）。
+
+因此，设当前 forcing 区间为 `[t0,t1)`（分钟），forcing 中的水平面短波值为常数 `Rn_h`（W/m²）。
+
+### 6.2 在 [t0,t1) 内积分近似
+
+令：
+
+```
+Δt_forc = t1 - t0
+Δt_int  = min(TSR_INTEGRATION_STEP_MIN, Δt_forc)
+n        = ceil(Δt_forc / Δt_int)    # 至少 1
+Δt_seg   = Δt_forc / n
+tk       = t0 + (k+0.5) * Δt_seg     # k=0..n-1（中点采样）
+```
+
+对每个 `tk` 计算 `cosZ_k`、`azimuth_k`、`f_k = f(tk)`。
+
+### 6.3 cosZ 加权的区间等效因子
+
+当前实现使用 `w(t) = max(cosZ(t), 0)` 作为权重（近似把短波日变化形状视为与 `cosZ` 同相）：
+
+```
+w_k   = max(cosZ_k, 0) * Δt_seg
+F_eff = ( Σ w_k * f_k ) / ( Σ w_k )
+```
+
+若 `Σ w_k = 0`（整段为夜间或极端情况）则 `F_eff = 0`。
+
+**最终在该 forcing 区间内使用常数因子：**
+
+```
+Rn_t = Rn_h * F_eff
+```
+
+对应源码：`src/ModelData/MD_ET.cpp`（区间采样/加权/缓存）与 `src/Equations/SolarRadiation.cpp`（`solarPosition()`/`terrainFactor()`）。
+
+## 7. 与 RADIATION_INPUT_MODE 的关系（SWDOWN vs SWNET）
+
+在 `tReadForcing()` 中，TSR 总是在短波输入层面先应用到 `Rn_h`：
+
+```
+Rn_t = Rn_h * F_eff
+```
+
+之后才决定是否乘以 `(1 - Albedo)`：
+
+- `RADIATION_INPUT_MODE = SWDOWN`（默认）：forcing 第 6 列为下行短波 `SW↓`（W/m²），模型内部净短波为：
+
+  ```
+  Rn_sw_net = Rn_t * (1 - Albedo)
+  ```
+
+- `RADIATION_INPUT_MODE = SWNET`：forcing 第 6 列已是净短波（已包含地表反照率等效），模型内部净短波为：
+
+  ```
+  Rn_sw_net = Rn_t
+  ```
+
+> 注意：本模块只做“坡面/水平面”的几何修正，不区分直射/散射分量，也不做天空视域/地形遮蔽修正。
+
+## 8. 诊断输出与时间戳语义
 
 当 `TERRAIN_RADIATION=1` 且 `DT_QE_ET > 0` 时，额外输出：
 
@@ -49,11 +223,21 @@ Rn_terrain = Rn_horizontal × TSR_factor
 | `*.rn_t.dat` | Rn_terrain | W/m² | 地形修正后短波辐射 |
 | `*.rn_factor.dat` | TSR_factor | - | 几何因子 (cosθ/cosZ) |
 
-**时间戳语义**：输出时间为区间左端点，值为该输出区间内的均值。
+**时间戳语义**：输出时间为区间左端点，值为该输出区间内的均值（见 `src/classes/Model_Control.cpp::Print_Ctrl::PrintData()`）。
 
-## 4. 使用示例
+设输出间隔为 `Δt_out`，则输出是时间平均：
 
-### 4.1 启用 TSR
+```
+rn_h_out(t)      = (1/Δt_out) ∫_{t}^{t+Δt_out} rn_h(τ) dτ
+rn_factor_out(t) = (1/Δt_out) ∫_{t}^{t+Δt_out} F_eff(τ) dτ
+rn_t_out(t)      = (1/Δt_out) ∫_{t}^{t+Δt_out} rn_h(τ)·F_eff(τ) dτ
+```
+
+因此一般有 `rn_t_out ≠ rn_h_out × rn_factor_out`（两者存在协方差；尤其当 forcing 为子日尺度而输出为日尺度时更明显）。
+
+## 9. 使用示例
+
+### 9.1 启用 TSR
 
 在 `input/<project>/<project>.cfg.para` 中添加：
 
@@ -61,23 +245,23 @@ Rn_terrain = Rn_horizontal × TSR_factor
 TERRAIN_RADIATION	1
 ```
 
-### 4.2 运行模型
+### 9.2 运行模型
 
 ```bash
 ./shud -o output/project_tsr project
 ```
 
-### 4.3 对比分析
+### 9.3 对比分析
 
 ```bash
 python3 post_analysis/compare_tsr.py
 ```
 
-## 5. 验证结果
+## 10. 验证结果（示例）
 
 CCW 流域测试 (1827天模拟)：
 
-### 5.1 辐射修正效果
+### 10.1 辐射修正效果
 
 | 指标 | 值 |
 |------|-----|
@@ -87,7 +271,7 @@ CCW 流域测试 (1827天模拟)：
 | 辐射削弱比例 (ratio < 1) | 57.8% |
 | 最大增强倍数 | 2.09x |
 
-### 5.2 水文变量响应
+### 10.2 水文变量响应
 
 | 变量 | 相对变化 |
 |------|----------|
@@ -97,7 +281,7 @@ CCW 流域测试 (1827天模拟)：
 | 非饱和带水量 | +0.2% |
 | 河道流量 | -0.8% |
 
-## 6. 源码结构
+## 11. 源码结构（关键实现点）
 
 | 文件 | 功能 |
 |------|------|
@@ -107,13 +291,14 @@ CCW 流域测试 (1827天模拟)：
 | `src/classes/Model_Control.cpp` | 参数解析与输出头信息 |
 | `src/classes/Element.cpp` | 单元地形法向量/坡度/坡向 |
 
-## 7. 限制与注意事项
+## 12. 限制与注意事项
 
 1. **单一太阳位置近似**：当前使用全局统一的太阳位置，不支持每个单元独立计算
 2. **无地形遮蔽**：不考虑地平线遮挡/阴影效果
-3. **时区处理**：太阳位置按 UTC 计算，避免经度推断时区的相位偏移
+3. **直射/散射未分离**：对总下行短波统一乘以几何因子，未对 diffuse 采用天空视域等修正
+4. **时区处理**：太阳位置按 UTC 计算（`timezone_hours=0.0`），避免经度推断时区的相位偏移
 
-## 8. 相关文档
+## 13. 相关文档
 
 - [Model Upgrade As-Is vs To-Be](model_upgrade.md)
 - [TSR Physical Assumptions](../TSR_Physical_Assumptions.md)
