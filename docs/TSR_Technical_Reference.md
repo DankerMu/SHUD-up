@@ -4,28 +4,36 @@
 
 - forcing 短波被视为“水平面短波通量（W/m²）”
 - TSR 将其几何修正为“坡面有效入射短波通量（W/m²）”
-- 修正系数按 forcing 的时间间隔（`[t0,t1)`）计算**区间等效因子**，避免“固定 60min bucket”在逐日/粗时间步 forcing 下引入系统误差
+- 修正系数按 forcing 的时间间隔（$[t_0,t_1)$）计算**区间等效因子**，避免“固定 60min bucket”在逐日/粗时间步 forcing 下引入系统误差
 
 ## 1. 物理原理
 
 TSR 模块根据地形坡度、坡向和太阳位置，修正每个单元接收的短波辐射。其核心是把“水平面下行短波”换算为“坡面有效入射短波”：
 
-```
-Rn_terrain = Rn_horizontal × TSR_factor
-```
+$$
+R_{n,t} = R_{n,h}\,F_{\mathrm{eff}}
+$$
 
-其中 `TSR_factor` 本质上来自几何关系（同一束太阳光，在坡面与水平面上的投影比值）。
+其中 $F_{\mathrm{eff}}$ 本质上来自几何关系（同一束太阳光在坡面与水平面上的投影比值；见 §6）。
+
+以“仅直射束”为例，若直射法向辐照度为 $I_n$，则水平面接收 $I_n\cos Z$、坡面接收 $I_n\cos i$，因此瞬时几何因子为：
+
+$$
+f(t) \approx \frac{\cos i(t)}{\cos Z(t)}
+$$
+
+TSR 的作用是把 forcing 中的“水平面短波通量”按该几何关系做**相对修正**（注意是 $\cos i/\cos Z$，不是再乘一次 $\cos Z$）。
 
 ### 1.1 记号与坐标系
 
-- 时间 `t`：以分钟计，`t=0` 对应 forcing 列表文件中的 `ForcStartTime`（yyyymmdd），详见 `src/ModelData/MD_readin.cpp` 与 `src/classes/TimeContext.*`。
-- 坐标系：`x`=East（东）、`y`=North（北）、`z`=Up（天顶）。
-- `n=(nx,ny,nz)`：单元地形面单位法向量（`nz>=0`）。
+- 时间 $t$：以分钟计，$t=0$ 对应 forcing 列表文件中的 `ForcStartTime`（yyyymmdd），详见 `src/ModelData/MD_readin.cpp` 与 `src/classes/TimeContext.*`。
+- 坐标系：$x$=East（东）、$y$=North（北）、$z$=Up（天顶）。
+- $\mathbf{n}=(n_x,n_y,n_z)$：单元地形面单位法向量（$n_z\ge 0$）。
 - 太阳位置（`SolarPosition`）：
-  - `cosZ = cos(zenith)`：太阳天顶角余弦（水平面的入射余弦）。
-  - `azimuth`：太阳方位角（弧度），定义为 `atan2(east, north)`，范围 `[0,2π)`，即 North=0、East=π/2。
-- 太阳方向单位向量 `s=(sx,sy,sz)`：由 `cosZ` 与 `azimuth` 转换得到（见 §4.2）。
-- 坡面入射余弦：`cos(i) = n · s`。
+  - $\cos Z$：太阳天顶角余弦（水平面的入射余弦）。
+  - $\mathrm{azimuth}$：太阳方位角（弧度），定义为 $\operatorname{atan2}(east,\,north)$，范围 $[0,2\pi)$，即 North=0、East=$\pi/2$。
+- 太阳方向单位向量 $\mathbf{s}=(s_x,s_y,s_z)$：由 $\cos Z$ 与 $\mathrm{azimuth}$ 转换得到（见 §4.3）。
+- 坡面入射余弦：$\cos i = \mathbf{n}\cdot \mathbf{s}$。
 
 ## 2. 配置参数
 
@@ -35,7 +43,7 @@ Rn_terrain = Rn_horizontal × TSR_factor
 |------|--------|------|
 | `TERRAIN_RADIATION` | 0 | 0=关闭, 1=启用 |
 | `RAD_FACTOR_CAP` | 5.0 | TSR因子上限，防止极端几何导致放大过大 |
-| `RAD_COSZ_MIN` | 0.05 | cosZ下限截断，避免日出/日落附近数值发散 |
+| `RAD_COSZ_MIN` | 0.05 | $\cos Z$ 下限截断，避免日出/日落附近数值发散 |
 | `TSR_INTEGRATION_STEP_MIN` | 60 | forcing 区间等效因子积分步长 (分钟) |
 | `RADIATION_INPUT_MODE` | SWDOWN | SWDOWN=下行短波，SWNET=净短波 |
 | `SOLAR_LONLAT_MODE` | FORCING_FIRST | 经纬度来源选择 |
@@ -48,22 +56,31 @@ Rn_terrain = Rn_horizontal × TSR_factor
 
 ### 2.1 TSR 因子语义（当前实现：forcing-interval 等效）
 
-- TSR 因子按 forcing 的“当前记录区间” `[t0,t1)` 计算一个等效 `TSR_factor`，并在该 forcing 区间内保持常数。
-- 区间等效形式为 cosZ 加权平均：`F_eff = (∫ max(cosZ,0) * f(t) dt) / (∫ max(cosZ,0) dt)`，其中 `f(t)` 仍遵循 `terrainFactor()`（含 `RAD_COSZ_MIN`/`RAD_FACTOR_CAP`）。
-- `TSR_INTEGRATION_STEP_MIN` 控制 `[t0,t1)` 内采样步长；对逐日短波 forcing，默认 60 分钟对应每天 24 个采样点。
+TSR 因子按 forcing 的“当前记录区间” $[t_0,t_1)$ 计算一个等效因子 $F_{\mathrm{eff}}$，并在该 forcing 区间内保持常数。
+
+区间等效形式为 $\cos Z$ 加权平均：
+
+$$
+F_{\mathrm{eff}}
+= \frac{\int_{t_0}^{t_1}\max(\cos Z(t),0)\,f(t)\,dt}{\int_{t_0}^{t_1}\max(\cos Z(t),0)\,dt}
+$$
+
+其中 $f(t)$ 为瞬时几何因子（遵循 `terrainFactor()`，含 `RAD_COSZ_MIN`/`RAD_FACTOR_CAP`；见 §5）。
+
+`TSR_INTEGRATION_STEP_MIN` 控制 $[t_0,t_1)$ 内采样步长；对逐日短波 forcing，默认 60 分钟对应每天 24 个采样点。
 
 > 兼容性说明：历史参数 `SOLAR_UPDATE_INTERVAL` / `TSR_FACTOR_MODE` 已废弃；若仍出现在配置中会被解析，但不再改变 TSR 的计算方法。
 
-## 3. 地形几何（n 向量）
+## 3. 地形几何（$\mathbf{n}$ 向量）
 
-每个 element 的地形面单位法向量 `n=(nx,ny,nz)` 来自三角形单元的三节点坐标（使用表面高程 `zmax`）：
+每个 element 的地形面单位法向量 $\mathbf{n}=(n_x,n_y,n_z)$ 来自三角形单元的三节点坐标（使用表面高程 `zmax`）：
 
-给定三点 `p1=(x1,y1,z1)`, `p2=(x2,y2,z2)`, `p3=(x3,y3,z3)`：
+给定三点 $\mathbf{p}_1=(x_1,y_1,z_1)$、$\mathbf{p}_2=(x_2,y_2,z_2)$、$\mathbf{p}_3=(x_3,y_3,z_3)$：
 
-1. 边向量：`v1=p2−p1`, `v2=p3−p1`
-2. 法向量：`n_raw = v1 × v2`
-3. 单位化：`n = n_raw / ||n_raw||`
-4. 保证 `nz>=0`：若 `nz<0` 则 `n=-n`（使法向量朝上）
+1. 边向量：$\mathbf{v}_1=\mathbf{p}_2-\mathbf{p}_1$，$\mathbf{v}_2=\mathbf{p}_3-\mathbf{p}_1$
+2. 法向量：$\mathbf{n}_{raw} = \mathbf{v}_1 \times \mathbf{v}_2$
+3. 单位化：$\mathbf{n} = \mathbf{n}_{raw} / \lVert \mathbf{n}_{raw} \rVert$
+4. 保证 $n_z\ge 0$：若 $n_z<0$ 则 $\mathbf{n}=-\mathbf{n}$（使法向量朝上）
 
 对应源码：`src/classes/Element.cpp`。
 
@@ -79,137 +96,142 @@ Rn_terrain = Rn_horizontal × TSR_factor
 
 设：
 
-- 纬度 `φ`（rad），经度 `λ`（deg，范围 wrap 到 `[-180,180]`）
-- `doy`：年内第几天（1–366）
-- `hour`：当天小时（`minuteOfDay(t)/60`）
-- `γ`：fractional year（rad）
-- `E`：equation of time（min）
-- `δ`：declination（rad）
-- `tz`：时区（hours；TSR 固定为 0）
-- `TST`：true solar time（min）
-- `ω`：hour angle（rad）
+- 纬度 $\varphi$（rad），经度 $\lambda$（deg，范围 wrap 到 $[-180,180]$）
+- $\mathrm{doy}$：年内第几天（1–366）
+- $\mathrm{hour}$：当天小时（$\mathrm{minuteOfDay}(t)/60$）
+- $\gamma$：fractional year（rad）
+- $E$：equation of time（min）
+- $\delta$：declination（rad）
+- $\mathrm{tz}$：时区（hours；TSR 固定为 0）
+- $\mathrm{TST}$：true solar time（min）
+- $\omega$：hour angle（rad）
 
 计算：
 
-```
-γ = (2π/365) * ((doy-1) + (hour-12)/24)
+$$
+\begin{aligned}
+\gamma &= \frac{2\pi}{365}\left((\mathrm{doy}-1) + \frac{\mathrm{hour}-12}{24}\right) \\
+E &= 229.18\Bigl(0.000075 + 0.001868\cos\gamma - 0.032077\sin\gamma \\
+&\quad\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\; - 0.014615\cos 2\gamma - 0.040849\sin 2\gamma\Bigr) \\
+\delta &= 0.006918 - 0.399912\cos\gamma + 0.070257\sin\gamma \\
+&\quad - 0.006758\cos 2\gamma + 0.000907\sin 2\gamma \\
+&\quad - 0.002697\cos 3\gamma + 0.00148\sin 3\gamma \\
+\mathrm{time\_offset} &= E + 4\lambda - 60\,\mathrm{tz} \\
+\mathrm{TST} &= \operatorname{wrap}_{1440}\!\left(\mathrm{minuteOfDay}(t) + \mathrm{time\_offset}\right) \\
+\omega &= \operatorname{deg2rad}\!\left(\mathrm{TST}/4 - 180\right) \\
+\cos Z &= \sin\varphi\,\sin\delta + \cos\varphi\,\cos\delta\,\cos\omega \\
+Z &= \arccos(\cos Z) \\
+east &= -\cos\delta\,\sin\omega \\
+north &= \cos\varphi\,\sin\delta - \sin\varphi\,\cos\delta\,\cos\omega \\
+\mathrm{azimuth} &= \operatorname{wrap}_{2\pi}\!\left(\operatorname{atan2}(east,\,north)\right)
+\end{aligned}
+$$
 
-E = 229.18 * (0.000075 + 0.001868 cosγ - 0.032077 sinγ
-              - 0.014615 cos2γ - 0.040849 sin2γ)
+### 4.3 由 ($\cos Z$, $\mathrm{azimuth}$) 得到太阳方向向量 $\mathbf{s}$
 
-δ = 0.006918 - 0.399912 cosγ + 0.070257 sinγ
-    - 0.006758 cos2γ + 0.000907 sin2γ
-    - 0.002697 cos3γ + 0.00148  sin3γ
+令 $\sin Z = \sqrt{\max\left(0,\,1-\cos^2 Z\right)}$，则：
 
-time_offset = E + 4λ - 60 tz
-TST = wrap_1440(minuteOfDay(t) + time_offset)
-ω = deg2rad(TST/4 - 180)
+$$
+\begin{aligned}
+s_x &= \sin Z\,\sin(\mathrm{azimuth}) \\
+s_y &= \sin Z\,\cos(\mathrm{azimuth}) \\
+s_z &= \cos Z
+\end{aligned}
+$$
 
-cosZ = sinφ sinδ + cosφ cosδ cosω
-zenith = arccos(cosZ)
+## 5. 瞬时 TSR 因子 $f(t)$
 
-east  = -cosδ sinω
-north =  cosφ sinδ - sinφ cosδ cosω
-azimuth = wrap_2π(atan2(east, north))
-```
+对任意时刻 $t$（且太阳在地平线上方），瞬时几何因子 $f(t)$ 与 `terrainFactor()` 一致：
 
-### 4.3 由 (cosZ, azimuth) 得到太阳方向向量 s
-
-令 `sinZ = sqrt(max(0, 1 - cosZ^2))`，则：
-
-```
-sx = sinZ * sin(azimuth)   # East
-sy = sinZ * cos(azimuth)   # North
-sz = cosZ                  # Up
-```
-
-## 5. 瞬时 TSR 因子 f(t)
-
-对任意时刻 `t`（且太阳在地平线上方），瞬时几何因子 `f(t)` 与 `terrainFactor()` 一致：
-
-1. 坡面入射余弦：`cos(i) = n · s`
+1. 坡面入射余弦：$\cos i = \mathbf{n}\cdot\mathbf{s}$
 2. 条件与截断：
 
-```
-if cosZ <= 0          -> f(t)=0
-if cos(i) <= 0        -> f(t)=0  # 背光坡
-denom = max(cosZ, RAD_COSZ_MIN)
-f(t) = min( cos(i) / denom, RAD_FACTOR_CAP )
-```
+$$
+f(t)=
+\begin{cases}
+0, & \cos Z(t)\le 0 \\
+0, & \cos i(t)\le 0 \\
+\min\!\left(\dfrac{\cos i(t)}{\max(\cos Z(t),\,\mathrm{RAD\_COSZ\_MIN})},\,\mathrm{RAD\_FACTOR\_CAP}\right), & \text{otherwise}
+\end{cases}
+$$
 
 说明：
 
-- `RAD_FACTOR_CAP`：防止在日出/日落附近 `cosZ` 很小导致 `cos(i)/cosZ` 过大。
-- `RAD_COSZ_MIN`：分母下限（默认 0.05，对应 zenith≈87.13°），用于数值稳定；这会导致**极低太阳高度**时即使水平面也可能出现 `f(t)<1`，但此时 `cosZ` 权重很小，对日尺度均值影响通常可忽略。
+- `RAD_FACTOR_CAP`：防止在日出/日落附近 $\cos Z$ 很小导致 $\cos i/\cos Z$ 过大。
+- `RAD_COSZ_MIN`：分母下限（默认 0.05，对应 $Z\approx 87.13^\circ$），用于数值稳定；这会导致**极低太阳高度**时即使水平面也可能出现 $f(t)<1$，但此时 $\cos Z$ 权重很小，对日尺度均值影响通常可忽略。
 
-## 6. forcing 区间等效 TSR 因子 F_eff（当前实现）
+> 水平面一致性：当 $\mathbf{n}=(0,0,1)$ 且 $\cos Z\ge \mathrm{RAD\_COSZ\_MIN}$ 时有 $f(t)=1$；只有在 $\cos Z<\mathrm{RAD\_COSZ\_MIN}$（极低太阳高度角）时会因分母截断产生 $f(t)<1$。
+
+## 6. forcing 区间等效 TSR 因子 $F_{\mathrm{eff}}$（当前实现）
 
 ### 6.1 forcing 区间定义
 
-weather forcing CSV 的每条记录带有时间戳 `t_k`（以 day 为单位存储，内部转为分钟），模型把该记录视为在区间：
+weather forcing CSV 的每条记录带有时间戳 $t_k$（以 day 为单位存储，内部转为分钟），模型把该记录视为在区间 $[t_k, t_{k+1})$ 内保持常数（通过 `TimeSeriesData::movePointer()` 切换到下一条记录）。
 
-```
-[t_k, t_{k+1})
-```
+因此，设当前 forcing 区间为 $[t_0,t_1)$（分钟），forcing 中的水平面短波值为常数 $R_{n,h}$（W/m²）。
 
-内保持常数（通过 `TimeSeriesData::movePointer()` 切换到下一条记录）。
-
-因此，设当前 forcing 区间为 `[t0,t1)`（分钟），forcing 中的水平面短波值为常数 `Rn_h`（W/m²）。
-
-### 6.2 在 [t0,t1) 内积分近似
+### 6.2 在 $[t_0,t_1)$ 内积分近似
 
 令：
 
-```
-Δt_forc = t1 - t0
-Δt_int  = min(TSR_INTEGRATION_STEP_MIN, Δt_forc)
-n        = ceil(Δt_forc / Δt_int)    # 至少 1
-Δt_seg   = Δt_forc / n
-tk       = t0 + (k+0.5) * Δt_seg     # k=0..n-1（中点采样）
-```
+$$
+\begin{aligned}
+\Delta t_{\mathrm{forc}} &= t_1 - t_0 \\
+\Delta t_{\mathrm{int}}  &= \min(\mathrm{TSR\_INTEGRATION\_STEP\_MIN},\,\Delta t_{\mathrm{forc}}) \\
+n &= \left\lceil \frac{\Delta t_{\mathrm{forc}}}{\Delta t_{\mathrm{int}}} \right\rceil \quad (n\ge 1) \\
+\Delta t_{\mathrm{seg}} &= \frac{\Delta t_{\mathrm{forc}}}{n} \\
+t_k &= t_0 + (k+0.5)\,\Delta t_{\mathrm{seg}},\quad k=0,\dots,n-1
+\end{aligned}
+$$
 
-对每个 `tk` 计算 `cosZ_k`、`azimuth_k`、`f_k = f(tk)`。
+对每个 $t_k$ 计算 $\cos Z_k$、$\mathrm{azimuth}_k$、$f_k=f(t_k)$。
 
-### 6.3 cosZ 加权的区间等效因子
+### 6.3 $\cos Z$ 加权的区间等效因子
 
-当前实现使用 `w(t) = max(cosZ(t), 0)` 作为权重（近似把短波日变化形状视为与 `cosZ` 同相）：
+当前实现使用 $w(t)=\max(\cos Z(t),0)$ 作为权重（近似把短波日变化形状视为与 $\cos Z$ 同相）：
 
-```
-w_k   = max(cosZ_k, 0) * Δt_seg
-F_eff = ( Σ w_k * f_k ) / ( Σ w_k )
-```
+$$
+\begin{aligned}
+w_k &= \max(\cos Z_k,\,0)\,\Delta t_{\mathrm{seg}} \\
+F_{\mathrm{eff}} &= \frac{\sum_k w_k f_k}{\sum_k w_k}
+\end{aligned}
+$$
 
-若 `Σ w_k = 0`（整段为夜间或极端情况）则 `F_eff = 0`。
+若 $\sum_k w_k = 0$（整段为夜间或极端情况）则 $F_{\mathrm{eff}}=0$。
 
 **最终在该 forcing 区间内使用常数因子：**
 
-```
-Rn_t = Rn_h * F_eff
-```
+$$
+R_{n,t} = R_{n,h}\,F_{\mathrm{eff}}
+$$
 
 对应源码：`src/ModelData/MD_ET.cpp`（区间采样/加权/缓存）与 `src/Equations/SolarRadiation.cpp`（`solarPosition()`/`terrainFactor()`）。
 
 ## 7. 与 RADIATION_INPUT_MODE 的关系（SWDOWN vs SWNET）
 
-在 `tReadForcing()` 中，TSR 总是在短波输入层面先应用到 `Rn_h`：
+在 `tReadForcing()` 中，TSR 总是在短波输入层面先应用到 $R_{n,h}$：
 
-```
-Rn_t = Rn_h * F_eff
-```
+$$
+R_{n,t} = R_{n,h}\,F_{\mathrm{eff}}
+$$
 
-之后才决定是否乘以 `(1 - Albedo)`：
+随后根据 `RADIATION_INPUT_MODE` 决定是否乘以 $(1-\mathrm{Albedo})$：
 
-- `RADIATION_INPUT_MODE = SWDOWN`（默认）：forcing 第 6 列为下行短波 `SW↓`（W/m²），模型内部净短波为：
+### 7.1 `SWDOWN`（默认）
 
-  ```
-  Rn_sw_net = Rn_t * (1 - Albedo)
-  ```
+forcing 第 6 列为下行短波 $SW_{\downarrow}$（W/m²），模型内部净短波为：
 
-- `RADIATION_INPUT_MODE = SWNET`：forcing 第 6 列已是净短波（已包含地表反照率等效），模型内部净短波为：
+$$
+R_{n,\mathrm{sw,net}} = R_{n,t}\,(1-\mathrm{Albedo})
+$$
 
-  ```
-  Rn_sw_net = Rn_t
-  ```
+### 7.2 `SWNET`
+
+forcing 第 6 列已是净短波（已包含地表反照率等效），模型内部净短波为：
+
+$$
+R_{n,\mathrm{sw,net}} = R_{n,t}
+$$
 
 > 注意：本模块只做“坡面/水平面”的几何修正，不区分直射/散射分量，也不做天空视域/地形遮蔽修正。
 
@@ -219,21 +241,23 @@ Rn_t = Rn_h * F_eff
 
 | 文件 | 变量 | 单位 | 说明 |
 |------|------|------|------|
-| `*.rn_h.dat` | Rn_horizontal | W/m² | 水平面短波辐射 (forcing 原值) |
-| `*.rn_t.dat` | Rn_terrain | W/m² | 地形修正后短波辐射 |
-| `*.rn_factor.dat` | TSR_factor | - | 几何因子 (cosθ/cosZ) |
+| `*.rn_h.dat` | `Rn_horizontal` | W/m² | 水平面短波辐射（forcing 原值） |
+| `*.rn_t.dat` | `Rn_terrain` | W/m² | 地形修正后短波辐射 |
+| `*.rn_factor.dat` | `TSR_factor` | - | 区间等效几何因子 $F_{\mathrm{eff}}$ |
 
 **时间戳语义**：输出时间为区间左端点，值为该输出区间内的均值（见 `src/classes/Model_Control.cpp::Print_Ctrl::PrintData()`）。
 
-设输出间隔为 `Δt_out`，则输出是时间平均：
+设输出间隔为 $\Delta t_{\mathrm{out}}$，则输出是时间平均：
 
-```
-rn_h_out(t)      = (1/Δt_out) ∫_{t}^{t+Δt_out} rn_h(τ) dτ
-rn_factor_out(t) = (1/Δt_out) ∫_{t}^{t+Δt_out} F_eff(τ) dτ
-rn_t_out(t)      = (1/Δt_out) ∫_{t}^{t+Δt_out} rn_h(τ)·F_eff(τ) dτ
-```
+$$
+\begin{aligned}
+rn_{h,\mathrm{out}}(t)      &= \frac{1}{\Delta t_{\mathrm{out}}}\int_{t}^{t+\Delta t_{\mathrm{out}}} rn_h(\tau)\,d\tau \\
+rn_{\mathrm{factor,out}}(t) &= \frac{1}{\Delta t_{\mathrm{out}}}\int_{t}^{t+\Delta t_{\mathrm{out}}} F_{\mathrm{eff}}(\tau)\,d\tau \\
+rn_{t,\mathrm{out}}(t)      &= \frac{1}{\Delta t_{\mathrm{out}}}\int_{t}^{t+\Delta t_{\mathrm{out}}} rn_h(\tau)\,F_{\mathrm{eff}}(\tau)\,d\tau
+\end{aligned}
+$$
 
-因此一般有 `rn_t_out ≠ rn_h_out × rn_factor_out`（两者存在协方差；尤其当 forcing 为子日尺度而输出为日尺度时更明显）。
+因此一般有 $rn_{t,\mathrm{out}} \ne rn_{h,\mathrm{out}}\;rn_{\mathrm{factor,out}}$（两者存在协方差；尤其当 forcing 为子日尺度而输出为日尺度时更明显）。
 
 ## 9. 使用示例
 
