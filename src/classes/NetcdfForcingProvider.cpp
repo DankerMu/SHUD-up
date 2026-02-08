@@ -572,6 +572,7 @@ struct NetcdfForcingProvider::Impl {
 
     std::string radiation_kind;
     std::string cmfd_precip_units; // AUTO/KG_M2_S/MM_HR/MM_DAY
+    bool layout_year_subdir = false; // ERA5: DATA_ROOT/<yyyy>/... when true (fallback supported)
 
     // Coordinates (global, derived from first month file)
     std::vector<double> grid_lat;
@@ -586,8 +587,8 @@ struct NetcdfForcingProvider::Impl {
 
     // Global time axis (minutes since forc_start_yyyymmdd)
     struct TimeMapItem {
-        int month_idx = -1;
-        size_t local_time_idx = 0;
+        int file_idx = -1;         // CMFD2: month index; ERA5: day index
+        size_t local_time_idx = 0; // time index within that file
     };
     std::vector<double> time_min;
     std::vector<TimeMapItem> time_map;
@@ -614,6 +615,13 @@ struct NetcdfForcingProvider::Impl {
     };
     std::vector<CmfdMonthFiles> cmfd_months;
 
+    // ERA5 file set per day (single NetCDF per day)
+    struct Era5DayFile {
+        std::string yyyymmdd;
+        std::string file;
+    };
+    std::vector<Era5DayFile> era5_days;
+
     int open_month_idx = -1;
     NcVarPointReader r_prec;
     NcVarPointReader r_temp;
@@ -625,6 +633,7 @@ struct NetcdfForcingProvider::Impl {
     ~Impl()
     {
         closeMonthReaders();
+        closeEra5Readers();
     }
 
     void closeMonthReaders()
@@ -636,6 +645,28 @@ struct NetcdfForcingProvider::Impl {
         r_wind.close();
         r_pres.close();
         open_month_idx = -1;
+    }
+
+    // ERA5 readers (single file per day)
+    int open_day_idx = -1;
+    NcVarPointReader r_tp;
+    NcVarPointReader r_t2m;
+    NcVarPointReader r_d2m;
+    NcVarPointReader r_u10;
+    NcVarPointReader r_v10;
+    NcVarPointReader r_ssr;
+    NcVarPointReader r_sp;
+
+    void closeEra5Readers()
+    {
+        r_tp.close();
+        r_t2m.close();
+        r_d2m.close();
+        r_u10.close();
+        r_v10.close();
+        r_ssr.close();
+        r_sp.close();
+        open_day_idx = -1;
     }
 
     void parseCfg()
@@ -685,6 +716,14 @@ struct NetcdfForcingProvider::Impl {
         lon_var = get("LON_VAR", dim_lon.c_str());
 
         cmfd_precip_units = toUpper(get("CMFD_PRECIP_UNITS", "AUTO"));
+        {
+            std::string ys = get("LAYOUT_YEAR_SUBDIR", "");
+            if (ys.empty()) {
+                ys = get("ERA5_YEAR_SUBDIR", "");
+            }
+            ys = toUpper(trim(ys));
+            layout_year_subdir = (ys == "1" || ys == "TRUE" || ys == "YES");
+        }
 
         // Layout var dirs
         for (const auto &it : kv) {
@@ -995,7 +1034,7 @@ struct NetcdfForcingProvider::Impl {
         return out;
     }
 
-    void discoverGridAndStations()
+    void discoverGridAndStationsCmfd()
     {
         if (cmfd_months.empty()) {
             fprintf(stderr, "\n  Fatal Error: CMFD2 month file list is empty.\n");
@@ -1079,7 +1118,7 @@ struct NetcdfForcingProvider::Impl {
         }
     }
 
-    void buildGlobalTimeAxis()
+    void buildGlobalTimeAxisCmfd()
     {
         time_min.clear();
         time_map.clear();
@@ -1095,7 +1134,7 @@ struct NetcdfForcingProvider::Impl {
                 }
                 time_min.push_back(t[k]);
                 TimeMapItem item;
-                item.month_idx = (int)mi;
+                item.file_idx = (int)mi;
                 item.local_time_idx = k;
                 time_map.push_back(item);
             }
@@ -1171,14 +1210,14 @@ struct NetcdfForcingProvider::Impl {
         return CMFD_AUTO;
     }
 
-    void loadCacheForTimeIndex(int t_idx)
+    void loadCacheForTimeIndexCmfd(int t_idx)
     {
         if (t_idx < 0 || t_idx >= (int)time_map.size()) {
             fprintf(stderr, "\n  Fatal Error: Invalid time index for NetCDF forcing cache load: %d\n", t_idx);
             myexit(ERRDATAIN);
         }
         const TimeMapItem &tm = time_map[(size_t)t_idx];
-        openCmfdMonth(tm.month_idx);
+        openCmfdMonth(tm.file_idx);
         const CmfdPrecipUnits pu = determineCmfdPrecipUnits();
 
         const size_t nst = stations.size();
@@ -1246,19 +1285,389 @@ struct NetcdfForcingProvider::Impl {
         loaded_time_idx = t_idx;
     }
 
-    void init()
+    void requireEra5Key(const char *k, const std::string &v) const
     {
-        parseCfg();
-        if (product != "CMFD2") {
-            fprintf(stderr, "\n  Fatal Error: NetCDF forcing PRODUCT is not supported yet: %s\n", product.c_str());
-            fprintf(stderr, "  Implemented: CMFD2\n");
-            fprintf(stderr, "  Planned: ERA5 (see issue #47)\n");
+        if (v.empty()) {
+            fprintf(stderr, "\n  Fatal Error: Missing required ERA5 forcing cfg key.\n");
+            fprintf(stderr, "  File: %s\n", cfg_path.c_str());
+            fprintf(stderr, "  Key: %s\n", k);
+            myexit(ERRFileIO);
+        }
+    }
+
+    void initEra5Days()
+    {
+        int base_y = 0;
+        unsigned base_m = 0;
+        unsigned base_d = 0;
+        if (!parseYYYYMMDD(forc_start_yyyymmdd, base_y, base_m, base_d)) {
+            fprintf(stderr, "\n  Fatal Error: Invalid ForcStartTime for NetCDF forcing: %ld\n", forc_start_yyyymmdd);
+            myexit(ERRDATAIN);
+        }
+        const long long base_days = daysFromCivil(base_y, base_m, base_d);
+        const long long start_days = base_days + (long long)std::floor(sim_start_min / 1440.0);
+        const long long end_days = base_days + (long long)std::floor(sim_end_min / 1440.0);
+
+        requireEra5Key("LAYOUT_FILE_PATTERN", layout_file_pattern);
+
+        auto tryResolveSingle = [&](const std::string &pattern, std::string &out) -> bool {
+            glob_t g;
+            memset(&g, 0, sizeof(g));
+            const int rc = glob(pattern.c_str(), 0, nullptr, &g);
+            if (rc != 0 || g.gl_pathc == 0) {
+                globfree(&g);
+                return false;
+            }
+            std::vector<std::string> matches;
+            matches.reserve(g.gl_pathc);
+            for (size_t i = 0; i < g.gl_pathc; i++) {
+                matches.emplace_back(g.gl_pathv[i]);
+            }
+            globfree(&g);
+            std::sort(matches.begin(), matches.end());
+            if (matches.size() != 1) {
+                fprintf(stderr, "\n  Fatal Error: NetCDF forcing file glob is ambiguous (%zu matches).\n", matches.size());
+                fprintf(stderr, "  Glob: %s\n", pattern.c_str());
+                myexit(ERRFileIO);
+            }
+            out = matches[0];
+            return true;
+        };
+
+        era5_days.clear();
+        era5_days.reserve((size_t)std::max<long long>(0LL, end_days - start_days + 1));
+        for (long long z = start_days; z <= end_days; z++) {
+            int y = 0;
+            unsigned m = 0;
+            unsigned d = 0;
+            civilFromDays(z, y, m, d);
+            const std::string yyyy = zfillInt(y, 4);
+            const std::string yyyymmdd = yyyy + zfillInt((int)m, 2) + zfillInt((int)d, 2);
+
+            std::string pat = layout_file_pattern;
+            replaceAll(pat, "{yyyymmdd}", yyyymmdd);
+
+            std::string resolved;
+            if (layout_year_subdir) {
+                const std::string p1 = joinPath(joinPath(data_root_abs, yyyy), pat);
+                if (!tryResolveSingle(p1, resolved)) {
+                    // Fallback: some datasets do not use the year subdir in practice.
+                    const std::string p2 = joinPath(data_root_abs, pat);
+                    if (!tryResolveSingle(p2, resolved)) {
+                        fprintf(stderr, "\n  Fatal Error: ERA5 NetCDF file not found.\n");
+                        fprintf(stderr, "  Tried: %s\n", p1.c_str());
+                        fprintf(stderr, "  Tried: %s\n", p2.c_str());
+                        myexit(ERRFileIO);
+                    }
+                }
+            } else {
+                const std::string p = joinPath(data_root_abs, pat);
+                resolved = resolveSingleGlob(p);
+            }
+
+            Era5DayFile df;
+            df.yyyymmdd = yyyymmdd;
+            df.file = resolved;
+            era5_days.push_back(df);
+        }
+
+        // Ensure required variable mappings exist (sp optional)
+        requireEra5Key("NC_VAR_TP", nc_var["TP"]);
+        requireEra5Key("NC_VAR_T2M", nc_var["T2M"]);
+        requireEra5Key("NC_VAR_D2M", nc_var["D2M"]);
+        requireEra5Key("NC_VAR_U10", nc_var["U10"]);
+        requireEra5Key("NC_VAR_V10", nc_var["V10"]);
+        requireEra5Key("NC_VAR_SSR", nc_var["SSR"]);
+    }
+
+    void discoverGridAndStationsEra5()
+    {
+        if (era5_days.empty()) {
+            fprintf(stderr, "\n  Fatal Error: ERA5 day file list is empty.\n");
+            myexit(ERRFileIO);
+        }
+        const std::string &grid_file = era5_days[0].file;
+        grid_lat = readCoord1d(grid_file, lat_var);
+        grid_lon = readCoord1d(grid_file, lon_var);
+        if (grid_lat.empty() || grid_lon.empty()) {
+            fprintf(stderr, "\n  Fatal Error: Failed to read ERA5 grid coordinate arrays.\n");
+            fprintf(stderr, "  File: %s\n", grid_file.c_str());
+            fprintf(stderr, "  LAT_VAR=%s (n=%zu)\n", lat_var.c_str(), grid_lat.size());
+            fprintf(stderr, "  LON_VAR=%s (n=%zu)\n", lon_var.c_str(), grid_lon.size());
             myexit(ERRFileIO);
         }
 
-        initCmfdMonths();
-        discoverGridAndStations();
-        buildGlobalTimeAxis();
+        double lon_min = grid_lon[0];
+        double lon_max = grid_lon[0];
+        for (double v : grid_lon) {
+            lon_min = std::min(lon_min, v);
+            lon_max = std::max(lon_max, v);
+        }
+        grid_lon_is_0360 = (lon_min >= 0.0 && lon_max > 180.0);
+
+        const size_t nst = stations.size();
+        station_lat_idx.assign(nst, 0);
+        station_lon_idx.assign(nst, 0);
+        station_grid_lat.assign(nst, NA_VALUE);
+        station_grid_lon.assign(nst, NA_VALUE);
+
+        for (size_t i = 0; i < nst; i++) {
+            double slon = stations[i].lon_deg;
+            double slat = stations[i].lat_deg;
+            if (grid_lon_is_0360) {
+                if (slon < 0.0) {
+                    slon += 360.0;
+                }
+                while (slon >= 360.0) {
+                    slon -= 360.0;
+                }
+            }
+
+            size_t best_j = 0;
+            double best_d = std::numeric_limits<double>::infinity();
+            for (size_t j = 0; j < grid_lon.size(); j++) {
+                const double d = std::fabs(grid_lon[j] - slon);
+                if (d < best_d) {
+                    best_d = d;
+                    best_j = j;
+                }
+            }
+            station_lon_idx[i] = best_j;
+            station_grid_lon[i] = grid_lon[best_j];
+
+            size_t best_k = 0;
+            double best_dlat = std::numeric_limits<double>::infinity();
+            for (size_t k = 0; k < grid_lat.size(); k++) {
+                const double d = std::fabs(grid_lat[k] - slat);
+                if (d < best_dlat) {
+                    best_dlat = d;
+                    best_k = k;
+                }
+            }
+            station_lat_idx[i] = best_k;
+            station_grid_lat[i] = grid_lat[best_k];
+        }
+
+        const size_t nlog = std::min<size_t>(stations.size(), 3);
+        fprintf(stdout, "\tNetCDF forcing: PRODUCT=%s, stations=%zu, grid=(lat=%zu, lon=%zu)\n",
+                product.c_str(), stations.size(), grid_lat.size(), grid_lon.size());
+        for (size_t i = 0; i < nlog; i++) {
+            fprintf(stdout,
+                    "\tNetCDF forcing map[%zu]: station(lon=%.6f, lat=%.6f) -> grid(idx_lat=%zu idx_lon=%zu; lon=%.6f lat=%.6f)\n",
+                    i,
+                    stations[i].lon_deg,
+                    stations[i].lat_deg,
+                    station_lat_idx[i],
+                    station_lon_idx[i],
+                    station_grid_lon[i],
+                    station_grid_lat[i]);
+        }
+    }
+
+    void buildGlobalTimeAxisEra5()
+    {
+        time_min.clear();
+        time_map.clear();
+        for (size_t di = 0; di < era5_days.size(); di++) {
+            const std::vector<double> t = readTimeAxisMin(era5_days[di].file);
+            for (size_t k = 0; k < t.size(); k++) {
+                if (!time_min.empty() && t[k] + 1e-9 < time_min.back()) {
+                    fprintf(stderr, "\n  Fatal Error: ERA5 time axis across files is not monotonic.\n");
+                    fprintf(stderr, "  Previous max t_min: %.6f\n", time_min.back());
+                    fprintf(stderr, "  Current  t_min: %.6f\n", t[k]);
+                    fprintf(stderr, "  File: %s\n", era5_days[di].file.c_str());
+                    myexit(ERRDATAIN);
+                }
+                time_min.push_back(t[k]);
+                TimeMapItem item;
+                item.file_idx = (int)di;
+                item.local_time_idx = k;
+                time_map.push_back(item);
+            }
+        }
+        if (time_min.empty()) {
+            fprintf(stderr, "\n  Fatal Error: ERA5 time axis is empty.\n");
+            myexit(ERRFileIO);
+        }
+        fprintf(stdout, "\tNetCDF forcing time coverage: [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
+                time_min.front(), time_min.back(), time_min.front() / 1440.0, time_min.back() / 1440.0);
+    }
+
+    void openEra5Day(int day_idx)
+    {
+        if (day_idx < 0 || day_idx >= (int)era5_days.size()) {
+            fprintf(stderr, "\n  Fatal Error: Invalid ERA5 day index for NetCDF forcing: %d\n", day_idx);
+            myexit(ERRDATAIN);
+        }
+        if (open_day_idx == day_idx) {
+            return;
+        }
+        closeEra5Readers();
+
+        const std::string &f = era5_days[(size_t)day_idx].file;
+        r_tp = openPointReader(f, nc_var["TP"], dim_time, dim_lat, dim_lon);
+        r_t2m = openPointReader(f, nc_var["T2M"], dim_time, dim_lat, dim_lon);
+        r_d2m = openPointReader(f, nc_var["D2M"], dim_time, dim_lat, dim_lon);
+        r_u10 = openPointReader(f, nc_var["U10"], dim_time, dim_lat, dim_lon);
+        r_v10 = openPointReader(f, nc_var["V10"], dim_time, dim_lat, dim_lon);
+        r_ssr = openPointReader(f, nc_var["SSR"], dim_time, dim_lat, dim_lon);
+        if (!nc_var["SP"].empty()) {
+            r_sp = openPointReader(f, nc_var["SP"], dim_time, dim_lat, dim_lon);
+        }
+        open_day_idx = day_idx;
+    }
+
+    void loadCacheForTimeIndexEra5(int t_idx)
+    {
+        if (t_idx < 0 || t_idx >= (int)time_map.size()) {
+            fprintf(stderr, "\n  Fatal Error: Invalid time index for ERA5 forcing cache load: %d\n", t_idx);
+            myexit(ERRDATAIN);
+        }
+        const TimeMapItem &tm0 = time_map[(size_t)t_idx];
+        openEra5Day(tm0.file_idx);
+
+        const bool has_next = ((size_t)t_idx + 1 < time_map.size());
+        TimeMapItem tm1;
+        tm1.file_idx = -1;
+        tm1.local_time_idx = 0;
+        double dt_sec = 3600.0;
+        if (has_next) {
+            tm1 = time_map[(size_t)t_idx + 1];
+            const double dt_min = time_min[(size_t)t_idx + 1] - time_min[(size_t)t_idx];
+            dt_sec = dt_min * 60.0;
+            if (!(dt_sec > 0.0)) {
+                fprintf(stderr, "\n  Fatal Error: ERA5 forcing dt_sec is invalid (<=0).\n");
+                fprintf(stderr, "  t_idx=%d, t0=%.6f, t1=%.6f\n", t_idx, time_min[(size_t)t_idx], time_min[(size_t)t_idx + 1]);
+                myexit(ERRDATAIN);
+            }
+        }
+
+        NcVarPointReader tp_next;
+        NcVarPointReader ssr_next;
+        const bool next_in_other_file = (has_next && tm1.file_idx != tm0.file_idx);
+        if (next_in_other_file) {
+            const std::string &f1 = era5_days[(size_t)tm1.file_idx].file;
+            tp_next = openPointReader(f1, nc_var["TP"], dim_time, dim_lat, dim_lon);
+            ssr_next = openPointReader(f1, nc_var["SSR"], dim_time, dim_lat, dim_lon);
+        }
+
+        const size_t nst = stations.size();
+        const size_t t0_local = tm0.local_time_idx;
+        const size_t t1_local = has_next ? tm1.local_time_idx : tm0.local_time_idx;
+
+        for (size_t i = 0; i < nst; i++) {
+            const size_t ilat = station_lat_idx[i];
+            const size_t ilon = station_lon_idx[i];
+
+            const double slon = stations[i].lon_deg;
+            const double slat = stations[i].lat_deg;
+            const double glon = station_grid_lon[i];
+            const double glat = station_grid_lat[i];
+
+            const double t2m_k = readPoint(r_t2m, t0_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+            const double d2m_k = readPoint(r_d2m, t0_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+            const double u10 = readPoint(r_u10, t0_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+            const double v10 = readPoint(r_v10, t0_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+
+            const double tp0 = readPoint(r_tp, t0_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+            const double ssr0 = readPoint(r_ssr, t0_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+
+            double tp1 = tp0;
+            double ssr1 = ssr0;
+            if (has_next) {
+                if (next_in_other_file) {
+                    tp1 = readPoint(tp_next, t1_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+                    ssr1 = readPoint(ssr_next, t1_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+                } else {
+                    tp1 = readPoint(r_tp, t1_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+                    ssr1 = readPoint(r_ssr, t1_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+                }
+            }
+
+            // Accumulated -> interval increment
+            double tp_inc_m = 0.0;
+            double ssr_inc_jm2 = 0.0;
+            if (has_next) {
+                const double d_tp = tp1 - tp0;
+                tp_inc_m = (d_tp >= 0.0) ? d_tp : tp1;
+                const double d_ssr = ssr1 - ssr0;
+                ssr_inc_jm2 = (d_ssr >= 0.0) ? d_ssr : ssr1;
+            }
+
+            double prcp_mm_day_val = 0.0;
+            double rn_wm2_val = 0.0;
+            if (has_next) {
+                prcp_mm_day_val = tp_inc_m * 1000.0 * (86400.0 / dt_sec);
+                rn_wm2_val = ssr_inc_jm2 / dt_sec;
+            }
+            if (!std::isfinite(prcp_mm_day_val) || prcp_mm_day_val < 0.0) {
+                prcp_mm_day_val = 0.0;
+            }
+            if (!std::isfinite(rn_wm2_val)) {
+                rn_wm2_val = 0.0;
+            }
+
+            const double temp_c_val = t2m_k - 273.15;
+            const double td_c = d2m_k - 273.15;
+
+            const double es = 6.112 * std::exp(17.67 * temp_c_val / (temp_c_val + 243.5));
+            const double ea = 6.112 * std::exp(17.67 * td_c / (td_c + 243.5));
+            double rh_val = 0.0;
+            if (std::isfinite(es) && es > 0.0 && std::isfinite(ea)) {
+                rh_val = ea / es;
+            }
+            if (!std::isfinite(rh_val)) {
+                rh_val = 0.0;
+            }
+            rh_val = std::min(1.0, std::max(0.0, rh_val));
+
+            const double wind_val = std::sqrt(u10 * u10 + v10 * v10);
+
+            prcp_mm_day[i] = prcp_mm_day_val;
+            temp_c[i] = temp_c_val;
+            rh_1[i] = rh_val;
+            wind_ms[i] = std::fabs(wind_val);
+            rn_wm2[i] = rn_wm2_val;
+        }
+
+        if (next_in_other_file) {
+            tp_next.close();
+            ssr_next.close();
+        }
+
+        loaded_time_idx = t_idx;
+    }
+
+    void loadCacheForTimeIndex(int t_idx)
+    {
+        if (product == "CMFD2") {
+            loadCacheForTimeIndexCmfd(t_idx);
+            return;
+        }
+        if (product == "ERA5") {
+            loadCacheForTimeIndexEra5(t_idx);
+            return;
+        }
+        fprintf(stderr, "\n  Fatal Error: Unsupported NetCDF forcing PRODUCT: %s\n", product.c_str());
+        myexit(ERRFileIO);
+    }
+
+    void init()
+    {
+        parseCfg();
+        if (product == "CMFD2") {
+            initCmfdMonths();
+            discoverGridAndStationsCmfd();
+            buildGlobalTimeAxisCmfd();
+        } else if (product == "ERA5") {
+            initEra5Days();
+            discoverGridAndStationsEra5();
+            buildGlobalTimeAxisEra5();
+        } else {
+            fprintf(stderr, "\n  Fatal Error: NetCDF forcing PRODUCT is not supported: %s\n", product.c_str());
+            fprintf(stderr, "  Implemented: CMFD2, ERA5\n");
+            myexit(ERRFileIO);
+        }
 
         prcp_mm_day.assign(stations.size(), 0.0);
         temp_c.assign(stations.size(), 0.0);
@@ -1269,6 +1678,7 @@ struct NetcdfForcingProvider::Impl {
         now_time_idx = 0;
         loaded_time_idx = -1;
         open_month_idx = -1;
+        open_day_idx = -1;
     }
 
     void movePointer(double t_min_in)
