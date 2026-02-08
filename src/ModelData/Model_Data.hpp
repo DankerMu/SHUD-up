@@ -330,6 +330,9 @@ private:
     void read_lc(const char *fn);
     void read_forc(const char *fn);
     void read_forc_csv(const char *fn);
+#ifdef _NETCDF_ON
+    void read_forc_netcdf(const char *fn);
+#endif
 //    void read_rl(const char *fn);
     void read_lai(const char *fn);
     void read_mf(const char *fn);

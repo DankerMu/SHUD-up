@@ -50,6 +50,11 @@ void Model_Data::CheckInput_forc(){
      Temperature in Kelvin[WORNG]
         instead of Celcius[RIGHT]
      *******************************************/
+    if (CS.forcing_mode != FORCING_CSV || tsd_weather == nullptr) {
+        fprintf(stderr, "\n  WARNING: CheckInput_forc() skipped for non-CSV forcing.\n");
+        fprintf(stderr, "  FORCING_MODE: %s\n", CS.forcing_mode == FORCING_NETCDF ? "NETCDF" : "CSV");
+        return;
+    }
     for(int i = 0; i < NumForc; i++){
         tsd_weather[i].checkValue(i_prcp, 0., 400, "Prcp"); /* 300 mm/day is hurricane level*/
         /*******************************************
@@ -63,4 +68,3 @@ void Model_Data::CheckInput_forc(){
         /* max = solar constant. 1360 */
     }
 }
-
