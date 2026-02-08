@@ -367,12 +367,184 @@ void Model_Data::read_forc(const char *fn)
         read_forc_csv(fn);
         return;
     }
-    fprintf(stderr,
-            "\n  Fatal Error: FORCING_MODE=NETCDF is selected but NetCDF forcing provider is not implemented yet.\n");
+#ifdef _NETCDF_ON
+    read_forc_netcdf(fn);
+    return;
+#else
+    fprintf(stderr, "\n  Fatal Error: FORCING_MODE=NETCDF is selected but SHUD was built without NetCDF support.\n");
     fprintf(stderr, "  FORCING_CFG: %s\n", CS.forcing_cfg);
-    fprintf(stderr, "  Fix: use FORCING_MODE=CSV (baseline) or implement NetCDF forcing provider (Phase A).\n\n");
+    fprintf(stderr, "  Fix: rebuild with NETCDF=1, or use FORCING_MODE=CSV (baseline).\n\n");
     myexit(ERRFileIO);
+#endif
 }
+
+#ifdef _NETCDF_ON
+#include "NetcdfForcingProvider.hpp"
+
+void Model_Data::read_forc_netcdf(const char *fn)
+{
+    FILE *fp = fopen(fn, "r");
+    CheckFile(fp, fn);
+
+    char str[MAXLEN];
+    int line_no = 0;
+
+    // 1) header: <NumForc> <ForcStartTime>
+    if (fgets(str, MAXLEN, fp) == NULL) {
+        fprintf(stderr, "\n  Fatal Error: forcing station list file is empty: %s\n", fn);
+        myexit(ERRFileIO);
+    }
+    line_no++;
+    int nread = sscanf(str, "%d %ld", &NumForc, &ForcStartTime);
+    if (nread != 2) {
+        fprintf(stderr, "\n  Fatal Error: invalid forcing list header in %s at line %d\n", fn, line_no);
+        fprintf(stderr, "  Expected: <NumForc> <ForcStartTime>\n");
+        fprintf(stderr, "  Got: %s", str);
+        myexit(ERRFileIO);
+    }
+    if (NumForc <= 0) {
+        fprintf(stderr, "\n  Fatal Error: NumForc must be > 0 in %s (got %d)\n", fn, NumForc);
+        myexit(ERRDATAIN);
+    }
+
+    Time.setBaseDate(ForcStartTime);
+
+    // 2) skip path line + header line
+    if (fgets(str, MAXLEN, fp) == NULL) {
+        fprintf(stderr, "\n  Fatal Error: forcing list file missing path line: %s\n", fn);
+        myexit(ERRFileIO);
+    }
+    line_no++;
+    if (fgets(str, MAXLEN, fp) == NULL) {
+        fprintf(stderr, "\n  Fatal Error: forcing list file missing header line: %s\n", fn);
+        myexit(ERRFileIO);
+    }
+    line_no++;
+
+    std::vector<ForcingStationMeta> stations;
+    stations.reserve((size_t)NumForc);
+
+    int id = 0;
+    double lon = NA_VALUE;
+    double lat = NA_VALUE;
+    double x = NA_VALUE;
+    double y = NA_VALUE;
+    double z = NA_VALUE;
+    char filename[MAXLEN];
+    filename[0] = '\0';
+
+    // 3) station records: ID Lon Lat X Y Z Filename
+    for (int i = 0; i < NumForc; ) {
+        if (fgets(str, MAXLEN, fp) == NULL) {
+            fprintf(stderr, "\n  Fatal Error: forcing list file %s ended early (expected %d records, got %d)\n",
+                    fn, NumForc, i);
+            myexit(ERRFileIO);
+        }
+        line_no++;
+        const char *p = str;
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+            p++;
+        }
+        if (*p == '\0' || *p == '#') {
+            continue;
+        }
+
+        nread = sscanf(str, "%d %lf %lf %lf %lf %lf %s", &id, &lon, &lat, &x, &y, &z, filename);
+        if (nread != 7) {
+            fprintf(stderr, "\n  Fatal Error: invalid forcing record in %s at line %d\n", fn, line_no);
+            fprintf(stderr, "  Expected: ID Lon Lat X Y Z Filename (7 columns)\n");
+            fprintf(stderr, "  Got: %s", str);
+            myexit(ERRFileIO);
+        }
+
+        ForcingStationMeta m;
+        m.lon_deg = lon;
+        m.lat_deg = lat;
+        m.z_m = z;
+        stations.push_back(m);
+        i++;
+    }
+    fclose(fp);
+
+    // Global solar lon/lat selection (same semantics as CSV mode)
+    CS.solar_lon_deg = NA_VALUE;
+    CS.solar_lat_deg = NA_VALUE;
+    if (CS.solar_lonlat_mode == FIXED) {
+        CS.solar_lon_deg = CS.solar_lon_deg_fixed;
+        CS.solar_lat_deg = CS.solar_lat_deg_fixed;
+        if (CS.solar_lon_deg == NA_VALUE || CS.solar_lat_deg == NA_VALUE) {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=FIXED but SOLAR_LON_DEG/SOLAR_LAT_DEG is missing.\n");
+            fprintf(stderr, "  Fix: set SOLAR_LON_DEG and SOLAR_LAT_DEG in %s\n", pf_in->file_para);
+            myexit(ERRDATAIN);
+        }
+    } else if (CS.solar_lonlat_mode == FORCING_MEAN) {
+        double sum_lon = 0.0;
+        double sum_lat = 0.0;
+        int n = 0;
+        for (int i = 0; i < NumForc; i++) {
+            const double lo = stations[(size_t)i].lon_deg;
+            const double la = stations[(size_t)i].lat_deg;
+            if (lo == NA_VALUE || la == NA_VALUE) {
+                continue;
+            }
+            if (lo < -180.0 || lo > 180.0 || la < -90.0 || la > 90.0) {
+                continue;
+            }
+            sum_lon += lo;
+            sum_lat += la;
+            n++;
+        }
+        if (n > 0) {
+            CS.solar_lon_deg = sum_lon / n;
+            CS.solar_lat_deg = sum_lat / n;
+        }
+    } else { /* FORCING_FIRST (default) */
+        CS.solar_lon_deg = stations[0].lon_deg;
+        CS.solar_lat_deg = stations[0].lat_deg;
+    }
+
+    if (CS.solar_lon_deg == NA_VALUE || CS.solar_lat_deg == NA_VALUE) {
+        if (CS.solar_lonlat_mode == FORCING_MEAN) {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=FORCING_MEAN but no valid Lon/Lat found in %s\n", fn);
+            fprintf(stderr, "  Requirements: lon in [-180, 180], lat in [-90, 90], and not NA_VALUE (%d)\n", NA_VALUE);
+            fprintf(stderr, "  Fix: provide valid Lon/Lat in %s, or set SOLAR_LONLAT_MODE=FIXED with SOLAR_LON_DEG/SOLAR_LAT_DEG in %s\n",
+                    fn, pf_in->file_para);
+        } else if (CS.solar_lonlat_mode == FORCING_FIRST) {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=FORCING_FIRST selected Lon/Lat is missing (lon=%.6f, lat=%.6f)\n",
+                    CS.solar_lon_deg, CS.solar_lat_deg);
+            fprintf(stderr, "  Fix: provide valid Lon/Lat in the first record of %s, or set SOLAR_LONLAT_MODE=FORCING_MEAN/FIXED in %s\n",
+                    fn, pf_in->file_para);
+        } else {
+            fprintf(stderr, "\n  Fatal Error: SOLAR_LONLAT_MODE=%s selected Lon/Lat is missing (lon=%.6f, lat=%.6f)\n",
+                    SolarLonLatModeName(CS.solar_lonlat_mode), CS.solar_lon_deg, CS.solar_lat_deg);
+        }
+        myexit(ERRDATAIN);
+    }
+    if (CS.solar_lon_deg < -180.0 || CS.solar_lon_deg > 180.0 || CS.solar_lat_deg < -90.0 || CS.solar_lat_deg > 90.0) {
+        fprintf(stderr, "\n  Fatal Error: invalid solar Lon/Lat selected (mode=%s, lon=%.6f, lat=%.6f)\n",
+                SolarLonLatModeName(CS.solar_lonlat_mode),
+                CS.solar_lon_deg,
+                CS.solar_lat_deg);
+        fprintf(stderr, "  Requirements: lon in [-180, 180], lat in [-90, 90]\n");
+        if (CS.solar_lonlat_mode == FIXED) {
+            fprintf(stderr, "  Fix: update SOLAR_LON_DEG/SOLAR_LAT_DEG in %s\n", pf_in->file_para);
+        } else {
+            fprintf(stderr, "  Fix: check Lon/Lat columns in %s, or set SOLAR_LONLAT_MODE=FIXED in %s\n", fn, pf_in->file_para);
+        }
+        myexit(ERRDATAIN);
+    }
+
+    printf("\tSolar lon/lat: mode=%s, lon=%.6f, lat=%.6f\n",
+           SolarLonLatModeName(CS.solar_lonlat_mode),
+           CS.solar_lon_deg,
+           CS.solar_lat_deg);
+
+    // Initialize provider (caches loaded in movePointer())
+    delete forcing;
+    forcing = new NetcdfForcingProvider(CS.forcing_cfg, stations, ForcStartTime, CS.StartTime, CS.EndTime);
+}
+#endif /* _NETCDF_ON */
+
 void Model_Data::read_forc_csv(const char *fn){
     FILE *fp = fopen(fn, "r");
     CheckFile(fp, fn);
@@ -639,15 +811,19 @@ void Model_Data::validateTimeStamps()
         fprintf(stderr, "  Fix: check START/END in %s\n", pf_in->file_para);
         myexit(ERRDATAIN);
     }
-    for (int i = 0; i < NumForc; i++) {
-        const double forcMin = tsd_weather[i].getMinTime();
-        const double forcMax = tsd_weather[i].getMaxTime();
-
+    if (CS.forcing_mode == FORCING_NETCDF) {
+#ifdef _NETCDF_ON
+        const NetcdfForcingProvider *nc_forcing = dynamic_cast<const NetcdfForcingProvider *>(forcing);
+        if (nc_forcing == nullptr) {
+            fprintf(stderr, "\n  Fatal Error: FORCING_MODE=NETCDF but forcing provider is not initialized.\n");
+            myexit(ERRDATAIN);
+        }
+        const double forcMin = nc_forcing->minTimeMin();
+        const double forcMax = nc_forcing->maxTimeMin();
         const bool startCovered = (forcMin - simStart) <= 1e-6;
         const bool endCovered = (simEnd - forcMax) <= 1e-6;
         if (!startCovered || !endCovered) {
-            fprintf(stderr, "\n  Fatal Error: Forcing data coverage is insufficient for simulation.\n");
-            fprintf(stderr, "  File: %s\n", tsd_weather[i].fn.c_str());
+            fprintf(stderr, "\n  Fatal Error: NetCDF forcing time coverage is insufficient for simulation.\n");
             fprintf(stderr, "  Simulation interval: [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
                     simStart, simEnd, simStart / 1440.0, simEnd / 1440.0);
             fprintf(stderr, "  Forcing coverage:    [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
@@ -659,48 +835,80 @@ void Model_Data::validateTimeStamps()
                 fprintf(stderr, "  Issue: forcing ends BEFORE simulation END.\n");
             }
             fprintf(stderr, "  Fix suggestions:\n");
-            fprintf(stderr, "    - Extend the forcing time-series (%s) to cover the simulation period.\n", tsd_weather[i].fn.c_str());
+            fprintf(stderr, "    - Extend the forcing NetCDF time coverage to include the simulation period.\n");
             fprintf(stderr, "    - Or adjust START/END in %s to fit within forcing coverage.\n", pf_in->file_para);
             myexit(ERRDATAIN);
+        }
+#else
+        fprintf(stderr, "\n  Fatal Error: FORCING_MODE=NETCDF but SHUD is built without NetCDF support.\n");
+        myexit(ERRDATAIN);
+#endif
+    } else {
+        for (int i = 0; i < NumForc; i++) {
+            const double forcMin = tsd_weather[i].getMinTime();
+            const double forcMax = tsd_weather[i].getMaxTime();
+
+            const bool startCovered = (forcMin - simStart) <= 1e-6;
+            const bool endCovered = (simEnd - forcMax) <= 1e-6;
+            if (!startCovered || !endCovered) {
+                fprintf(stderr, "\n  Fatal Error: Forcing data coverage is insufficient for simulation.\n");
+                fprintf(stderr, "  File: %s\n", tsd_weather[i].fn.c_str());
+                fprintf(stderr, "  Simulation interval: [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
+                        simStart, simEnd, simStart / 1440.0, simEnd / 1440.0);
+                fprintf(stderr, "  Forcing coverage:    [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
+                        forcMin, forcMax, forcMin / 1440.0, forcMax / 1440.0);
+                if (!startCovered) {
+                    fprintf(stderr, "  Issue: forcing starts AFTER simulation START.\n");
+                }
+                if (!endCovered) {
+                    fprintf(stderr, "  Issue: forcing ends BEFORE simulation END.\n");
+                }
+                fprintf(stderr, "  Fix suggestions:\n");
+                fprintf(stderr, "    - Extend the forcing time-series (%s) to cover the simulation period.\n", tsd_weather[i].fn.c_str());
+                fprintf(stderr, "    - Or adjust START/END in %s to fit within forcing coverage.\n", pf_in->file_para);
+                myexit(ERRDATAIN);
+            }
         }
     }
 
     // 1) forcing: station file start_yyyymmdd == ForcStartTime
-    for (int i = 0; i < NumForc; i++) {
-        const std::string &filename = tsd_weather[i].fn;
-        FILE *fp = fopen(filename.c_str(), "r");
-        CheckFile(fp, filename.c_str());
+    if (CS.forcing_mode == FORCING_CSV) {
+        for (int i = 0; i < NumForc; i++) {
+            const std::string &filename = tsd_weather[i].fn;
+            FILE *fp = fopen(filename.c_str(), "r");
+            CheckFile(fp, filename.c_str());
 
-        char line[MAXLEN];
-        if (fgets(line, MAXLEN, fp) == NULL) {
+            char line[MAXLEN];
+            if (fgets(line, MAXLEN, fp) == NULL) {
+                fclose(fp);
+                fprintf(stderr, "\n  Fatal Error: Failed to read forcing header line.\n");
+                fprintf(stderr, "  File: %s\n", filename.c_str());
+                fprintf(stderr, "  Fix: ensure the forcing csv has a valid first line with start_yyyymmdd.\n");
+                myexit(ERRFileIO);
+            }
             fclose(fp);
-            fprintf(stderr, "\n  Fatal Error: Failed to read forcing header line.\n");
-            fprintf(stderr, "  File: %s\n", filename.c_str());
-            fprintf(stderr, "  Fix: ensure the forcing csv has a valid first line with start_yyyymmdd.\n");
-            myexit(ERRFileIO);
-        }
-        fclose(fp);
 
-        int nrow = 0;
-        int ncol = 0;
-        long start_yyyymmdd = 0;
-        long end_yyyymmdd = 0;
-        const int nread = sscanf(line, "%d %d %ld %ld", &nrow, &ncol, &start_yyyymmdd, &end_yyyymmdd);
-        if (nread < 3) {
-            fprintf(stderr, "\n  Fatal Error: Invalid forcing header format (expect: nrow ncol start_yyyymmdd [end_yyyymmdd]).\n");
-            fprintf(stderr, "  File: %s\n", filename.c_str());
-            fprintf(stderr, "  Header: %s\n", line);
-            fprintf(stderr, "  Fix: make sure the 3rd value is start_yyyymmdd, e.g. \"87667 6 20000101 20100101\".\n");
-            myexit(ERRDATAIN);
-        }
-        if (start_yyyymmdd != expected) {
-            fprintf(stderr, "\n  Fatal Error: Forcing start_yyyymmdd does not match ForcStartTime.\n");
-            fprintf(stderr, "  File: %s\n", filename.c_str());
-            fprintf(stderr, "  Expected start_yyyymmdd (ForcStartTime from %s): %ld\n", pf_in->file_forc, expected);
-            fprintf(stderr, "  Actual start_yyyymmdd: %ld\n", start_yyyymmdd);
-            fprintf(stderr, "  Fix: set the 3rd value in the first line of this forcing csv to %ld,\n", expected);
-            fprintf(stderr, "       or update ForcStartTime in %s to %ld to match the forcing csv.\n", pf_in->file_forc, start_yyyymmdd);
-            myexit(ERRDATAIN);
+            int nrow = 0;
+            int ncol = 0;
+            long start_yyyymmdd = 0;
+            long end_yyyymmdd = 0;
+            const int nread = sscanf(line, "%d %d %ld %ld", &nrow, &ncol, &start_yyyymmdd, &end_yyyymmdd);
+            if (nread < 3) {
+                fprintf(stderr, "\n  Fatal Error: Invalid forcing header format (expect: nrow ncol start_yyyymmdd [end_yyyymmdd]).\n");
+                fprintf(stderr, "  File: %s\n", filename.c_str());
+                fprintf(stderr, "  Header: %s\n", line);
+                fprintf(stderr, "  Fix: make sure the 3rd value is start_yyyymmdd, e.g. \"87667 6 20000101 20100101\".\n");
+                myexit(ERRDATAIN);
+            }
+            if (start_yyyymmdd != expected) {
+                fprintf(stderr, "\n  Fatal Error: Forcing start_yyyymmdd does not match ForcStartTime.\n");
+                fprintf(stderr, "  File: %s\n", filename.c_str());
+                fprintf(stderr, "  Expected start_yyyymmdd (ForcStartTime from %s): %ld\n", pf_in->file_forc, expected);
+                fprintf(stderr, "  Actual start_yyyymmdd: %ld\n", start_yyyymmdd);
+                fprintf(stderr, "  Fix: set the 3rd value in the first line of this forcing csv to %ld,\n", expected);
+                fprintf(stderr, "       or update ForcStartTime in %s to %ld to match the forcing csv.\n", pf_in->file_forc, start_yyyymmdd);
+                myexit(ERRDATAIN);
+            }
         }
     }
 
