@@ -6,6 +6,10 @@
 #include "functions.hpp"
 #include "Model_Data.hpp"
 
+#ifdef _NETCDF_ON
+#include "NetcdfOutputContext.hpp"
+#endif
+
 void Model_Data::LoadIC(){
     for (int i = 0; i < NumEle; i++) {
         yEleWetFront[i] = 0.;
@@ -240,6 +244,15 @@ void Model_Data::initialize(){
     read_cfgout(pf_in->file_cfgout);
 }
 void Model_Data:: initialize_output (){
+#ifndef _NETCDF_ON
+    if (CS.output_mode == OUTPUT_NETCDF || CS.output_mode == OUTPUT_BOTH) {
+        fprintf(stderr,
+                "\n  Fatal Error: OUTPUT_MODE includes NETCDF but SHUD was built without NetCDF support.\n");
+        fprintf(stderr, "  Fix: rebuild with NETCDF=1, or use OUTPUT_MODE=LEGACY.\n\n");
+        myexit(ERRFileIO);
+    }
+#endif
+
     int ip = 0;
     /* Storage */
     if (CS.dt_ye_ic > 0)
@@ -328,11 +341,24 @@ void Model_Data:: initialize_output (){
         CS.PCtrl[ip++].Init(ForcStartTime, NumLake, pf_out->lake_Q_sub, CS.dt_lake, QLakeSub, 1, io_lake);
     }
     CS.NumPrint = ip;
+
+#ifdef _NETCDF_ON
+    if (CS.output_mode == OUTPUT_NETCDF || CS.output_mode == OUTPUT_BOTH) {
+        ncoutput = std::make_unique<NetcdfOutputContext>(CS.ncoutput_cfg);
+        for (int i = 0; i < CS.NumPrint; i++) {
+            if (CS.PCtrl[i].numAll() == NumEle) {
+                CS.PCtrl[i].setSink(ncoutput->createElementSink());
+            }
+        }
+    }
+#endif
     
     for (int i = 0; i < CS.NumPrint; i++)
     {
-        CS.PCtrl[i].open_file(CS.Ascii,
-                              CS.Binary,
+        const int ascii = (CS.output_mode == OUTPUT_NETCDF) ? 0 : CS.Ascii;
+        const int binary = (CS.output_mode == OUTPUT_NETCDF) ? 0 : CS.Binary;
+        CS.PCtrl[i].open_file(ascii,
+                              binary,
                               CS.radiation_input_mode,
                               CS.terrain_radiation,
                               CS.solar_lonlat_mode,
