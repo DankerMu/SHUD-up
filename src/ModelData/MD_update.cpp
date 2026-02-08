@@ -2,7 +2,10 @@
 
 void Model_Data::updateAllTimeSeries(double t_min)
 {
-    if (NumForc > 0 && tsd_weather != nullptr) {
+    if (NumForc > 0 && forcing != nullptr) {
+        forcing->movePointer(t_min);
+    } else if (NumForc > 0 && tsd_weather != nullptr) {
+        // Legacy fallback (should not happen once forcing provider is initialized).
         for (int i = 0; i < NumForc; i++) {
             tsd_weather[i].movePointer(t_min);
         }
