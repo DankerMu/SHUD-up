@@ -1,6 +1,10 @@
 #include "Model_Data.hpp"
 #include "is_sm_et.hpp"
 
+#ifdef _NETCDF_ON
+#include "NetcdfOutputContext.hpp"
+#endif
+
 Model_Data::Model_Data(){
 }
 

@@ -7,6 +7,7 @@
 #define Model_Data_hpp
 
 #include <stdio.h>
+#include <memory>
 #include <vector>
 #include "TimeSeriesData.hpp"
 #include "ForcingProvider.hpp"
@@ -26,6 +27,11 @@
 #include "AccTemperature.hpp"
 using namespace std;
 class WaterBalanceDiag;
+
+#ifdef _NETCDF_ON
+class NetcdfOutputContext;
+#endif
+
 class Model_Data {        /* Model_data definition */
 public:
     FileIn  *pf_in;
@@ -94,6 +100,12 @@ public:
     int ieSS = 0;
     
     globalCal gc;
+
+#ifdef _NETCDF_ON
+    /* NetCDF output context MUST outlive Control_Data::PCtrl destructors. */
+    std::unique_ptr<NetcdfOutputContext> ncoutput;
+#endif
+
     Control_Data CS;
     
     _Element *Ele;        /* Store Element Information */
