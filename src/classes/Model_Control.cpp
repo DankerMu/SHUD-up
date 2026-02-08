@@ -8,6 +8,49 @@
 
 #include <cctype>
 #include <cmath>
+
+static bool _read_kv_cfg_value(const char *path, const char *key, char *out, size_t out_sz)
+{
+    if (out == NULL || out_sz == 0) {
+        return false;
+    }
+    out[0] = '\0';
+
+    if (path == NULL || path[0] == '\0' || key == NULL || key[0] == '\0') {
+        return false;
+    }
+
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        return false;
+    }
+
+    char line[MAXLEN];
+    while (fgets(line, (int)sizeof(line), fp) != NULL) {
+        char *p = line;
+        while (*p != '\0' && std::isspace((unsigned char)*p)) {
+            p++;
+        }
+        if (*p == '\0' || *p == '\n' || *p == '#') {
+            continue;
+        }
+
+        char k[MAXLEN] = "";
+        char v[MAXLEN] = "";
+        if (sscanf(p, "%s %s", k, v) != 2) {
+            continue;
+        }
+        if (strcasecmp(k, key) == 0) {
+            strncpy(out, v, out_sz - 1);
+            out[out_sz - 1] = '\0';
+            fclose(fp);
+            return true;
+        }
+    }
+
+    fclose(fp);
+    return false;
+}
 void PrintOutDt::defaultmode(){
     int dt = 1440;
     /* Element storage */
@@ -98,6 +141,9 @@ void Control_Data::updateSimPeriod(double day0, double day1){
 void Control_Data::read(const char *fn){
     char    str[MAXLEN];
     char    optstr[MAXLEN];
+    bool radiation_input_mode_user_set = false;
+    bool radiation_input_mode_from_forcing_cfg = false;
+    char forcing_radiation_kind_eff[MAXLEN] = "";
 #ifdef _OPENMP_ON
     num_threads = omp_get_max_threads();; /*Default number of threads for OpenMP*/
 #else
@@ -222,6 +268,7 @@ void Control_Data::read(const char *fn){
             const int default_mode = SWDOWN;
             char mode_str[MAXLEN] = "";
             radiation_input_mode = default_mode;
+            radiation_input_mode_user_set = false;
             if (sscanf(str, "%s %s", optstr, mode_str) != 2) {
                 fprintf(stderr,
                         "WARNING: RADIATION_INPUT_MODE missing value in %s; using default %s (%d).\n",
@@ -230,13 +277,16 @@ void Control_Data::read(const char *fn){
                         default_mode);
             } else if (strcasecmp(mode_str, "SWDOWN") == 0) {
                 radiation_input_mode = SWDOWN;
+                radiation_input_mode_user_set = true;
             } else if (strcasecmp(mode_str, "SWNET") == 0) {
                 radiation_input_mode = SWNET;
+                radiation_input_mode_user_set = true;
             } else {
                 char *endptr = NULL;
                 const double mode_val = strtod(mode_str, &endptr);
                 if (endptr != NULL && *endptr == '\0' && (mode_val == 0.0 || mode_val == 1.0)) {
                     radiation_input_mode = (mode_val == 1.0) ? SWNET : SWDOWN;
+                    radiation_input_mode_user_set = true;
                 } else {
                     fprintf(stderr,
                             "WARNING: invalid RADIATION_INPUT_MODE value '%s' in %s; using default %s (%d). "
@@ -495,6 +545,47 @@ void Control_Data::read(const char *fn){
         fclose(fp_cfg);
         strncpy(forcing_cfg, resolved, MAXLEN - 1);
         forcing_cfg[MAXLEN - 1] = '\0';
+
+        // Derive radiation semantics from FORCING_CFG.RADIATION_KIND when user did not specify
+        // RADIATION_INPUT_MODE explicitly. Error on conflict to avoid silent double-albedo.
+        char product[MAXLEN] = "";
+        char radiation_kind[MAXLEN] = "";
+        (void)_read_kv_cfg_value(forcing_cfg, "PRODUCT", product, sizeof(product));
+        const bool has_kind = _read_kv_cfg_value(forcing_cfg, "RADIATION_KIND", radiation_kind, sizeof(radiation_kind));
+
+        const bool is_era5 = (product[0] != '\0' && strcasecmp(product, "ERA5") == 0);
+        const char *default_kind = is_era5 ? "SWNET" : "SWDOWN";
+        const char *effective_kind = (has_kind && radiation_kind[0] != '\0') ? radiation_kind : default_kind;
+
+        // Store for startup logs.
+        strncpy(forcing_radiation_kind_eff, effective_kind, sizeof(forcing_radiation_kind_eff) - 1);
+        forcing_radiation_kind_eff[sizeof(forcing_radiation_kind_eff) - 1] = '\0';
+
+        int desired_mode = NA_VALUE;
+        if (strcasecmp(effective_kind, "SWDOWN") == 0) {
+            desired_mode = SWDOWN;
+        } else if (strcasecmp(effective_kind, "SWNET") == 0) {
+            desired_mode = SWNET;
+        } else {
+            fprintf(stderr, "\n  Fatal Error: invalid RADIATION_KIND in FORCING_CFG.\n");
+            fprintf(stderr, "  FORCING_CFG: %s\n", forcing_cfg);
+            fprintf(stderr, "  RADIATION_KIND: %s\n", effective_kind);
+            fprintf(stderr, "  Valid: SWDOWN | SWNET\n");
+            myexit(ERRFileIO);
+        }
+
+        if (radiation_input_mode_user_set) {
+            if (radiation_input_mode != desired_mode) {
+                fprintf(stderr, "\n  Fatal Error: RADIATION_INPUT_MODE conflicts with FORCING_CFG RADIATION_KIND.\n");
+                fprintf(stderr, "  cfg.para RADIATION_INPUT_MODE: %s\n", radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
+                fprintf(stderr, "  FORCING_CFG RADIATION_KIND:    %s\n", effective_kind);
+                fprintf(stderr, "  Fix: make them consistent. For NetCDF forcing, ET expects they match.\n");
+                myexit(ERRFileIO);
+            }
+        } else {
+            radiation_input_mode = desired_mode;
+            radiation_input_mode_from_forcing_cfg = true;
+        }
     }
 
     if (output_mode == OUTPUT_NETCDF || output_mode == OUTPUT_BOTH) {
@@ -550,8 +641,21 @@ void Control_Data::read(const char *fn){
     const char *out_mode_str =
         output_mode == OUTPUT_NETCDF ? "NETCDF" : (output_mode == OUTPUT_BOTH ? "BOTH" : "LEGACY");
     fprintf(stdout, "* \t OUTPUT_MODE: %s\n", out_mode_str);
-    fprintf(stdout, "* \t RADIATION_INPUT_MODE: %s\n",
-            radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
+    {
+        char note[MAXLEN] = "";
+        if (forcing_mode == FORCING_NETCDF && forcing_radiation_kind_eff[0] != '\0') {
+            if (radiation_input_mode_from_forcing_cfg) {
+                snprintf(note, sizeof(note), " (derived from FORCING_CFG RADIATION_KIND=%s)", forcing_radiation_kind_eff);
+            } else if (radiation_input_mode_user_set) {
+                snprintf(note, sizeof(note), " (cfg.para; FORCING_CFG RADIATION_KIND=%s)", forcing_radiation_kind_eff);
+            } else {
+                snprintf(note, sizeof(note), " (FORCING_CFG RADIATION_KIND=%s)", forcing_radiation_kind_eff);
+            }
+        }
+        fprintf(stdout, "* \t RADIATION_INPUT_MODE: %s%s\n",
+                radiation_input_mode == SWNET ? "SWNET" : "SWDOWN",
+                note);
+    }
     fprintf(stdout, "* \t SOLAR_LONLAT_MODE: %s\n", SolarLonLatModeName(solar_lonlat_mode));
     if (solar_lonlat_mode == FIXED) {
         fprintf(stdout, "* \t SOLAR_LON_DEG: %.6f\n", solar_lon_deg_fixed);
