@@ -24,6 +24,8 @@ public:
     ~NetcdfOutputContext();
 
     IPrintSink *createElementSink();
+    IPrintSink *createRiverSink();
+    IPrintSink *createLakeSink();
 
 private:
     struct Impl;
