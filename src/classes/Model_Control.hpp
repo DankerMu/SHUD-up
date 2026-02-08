@@ -27,6 +27,12 @@ enum ForcingMode{
     FORCING_NETCDF = 1
 };
 
+enum OutputMode{
+    OUTPUT_LEGACY = 0,
+    OUTPUT_NETCDF = 1,
+    OUTPUT_BOTH = 2
+};
+
 static inline const char* SolarLonLatModeName(SolarLonLatMode mode)
 {
     switch (mode) {
@@ -122,6 +128,8 @@ private:
 public:
     ForcingMode forcing_mode = FORCING_CSV; /* FORCING_MODE: CSV (default) or NETCDF */
     char forcing_cfg[MAXLEN] = "";          /* FORCING_CFG: path (required when FORCING_MODE=NETCDF) */
+    OutputMode output_mode = OUTPUT_LEGACY; /* OUTPUT_MODE: LEGACY (default), NETCDF, or BOTH */
+    char ncoutput_cfg[MAXLEN] = "";         /* NCOUTPUT_CFG: path (required when OUTPUT_MODE includes NETCDF) */
     int Verbose = 0;
     int CloseBoundary = 1; /* Whether the close boundary exist. 1 = no boundary flux. 0 = Default boundary flux. [bool]*/
     int Ascii = 0;      /* Whether export result as ASCII File [bool]*/
