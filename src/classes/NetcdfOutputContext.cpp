@@ -495,7 +495,7 @@ public:
                 "nc_def_var(element_output_mask)",
                 file_path_.c_str());
 
-        const char *conventions = "CF-1.10";
+        const char *conventions = "CF-1.10 UGRID-1.0";
         ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "Conventions", strlen(conventions), conventions),
                 "nc_put_att_text(global.Conventions)",
                 file_path_.c_str());
@@ -803,7 +803,7 @@ public:
                 "nc_def_var(output_mask)",
                 file_path_.c_str());
 
-        const char *conventions = "CF-1.10 UGRID-1.0";
+        const char *conventions = "CF-1.10";
         ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "Conventions", strlen(conventions), conventions),
                 "nc_put_att_text(global.Conventions)",
                 file_path_.c_str());
