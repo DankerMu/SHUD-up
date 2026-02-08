@@ -604,6 +604,20 @@ void Print_Ctrl::open_file(int a,
              solar_lon_deg,
              solar_lat_deg);
 
+    if (sink != NULL) {
+        sink->onInit(filename,
+                     StartTime,
+                     Interval,
+                     NumAll,
+                     NumVar,
+                     icol,
+                     radiation_input_mode,
+                     terrain_radiation,
+                     static_cast<int>(solar_lonlat_mode),
+                     solar_lon_deg,
+                     solar_lat_deg);
+    }
+
     if (Binary){
         fid_bin = fopen (fileb, "wb");
         CheckFile(fid_bin, fileb);
@@ -641,6 +655,7 @@ void Print_Ctrl::open_file(int a,
 void Print_Ctrl::Init(long st, int n, const char *s, int dt, double *x, int iFlux){
     StartTime = st;
     NumVar  = n;
+    NumAll  = n;
     PrintVar = new double*[NumVar];
     buffer  = new double[NumVar];
     icol    = new double[NumVar];
@@ -667,6 +682,7 @@ void Print_Ctrl::Init(long st, int n, const char *s, int dt, double *x, int iFlu
 void Print_Ctrl::InitIJ(long st, int n, const char *s, int dt, double **x, int j, int iFlux){
     StartTime = st;
     NumVar  = n;
+    NumAll  = n;
     PrintVar = new double*[NumVar];
     buffer  = new double[NumVar];
     icol    = new double[NumVar];
@@ -690,6 +706,7 @@ void Print_Ctrl::InitIJ(long st, int n, const char *s, int dt, double **x, int j
 
 void Print_Ctrl::Init(long st, int n, const char *s, int dt, double *x, int iFlux, int *flag_IO){
     StartTime = st;
+    NumAll = n;
     strcpy(filename, s);
     if(strlen(filename) < 1){
         fprintf(stderr, "WARNING: filename (%s)is empty.\n;", filename);
@@ -716,6 +733,7 @@ void Print_Ctrl::Init(long st, int n, const char *s, int dt, double *x, int iFlu
         if(flag_IO[i]){ /* IO is TRUE*/
             PrintVar[k] = &x[i];
             icol[k] = (double) (i + 1);
+            buffer[k] = 0.0;
             k++;
         }
     }
@@ -728,10 +746,7 @@ void Print_Ctrl::Init(long st, int n, const char *s, int dt, double *x, int iFlu
 
 void Print_Ctrl::InitIJ(long st, int n, const char *s, int dt, double **x, int j, int iFlux, int *flag_IO){
     StartTime = st;
-    NumVar = n;
-    PrintVar = new double*[NumVar];
-    buffer = new double[NumVar];
-    icol    = new double[NumVar];
+    NumAll = n;
     strcpy(filename, s);
     if(dt == 0 ){
         myexit(ERRCONSIS);
@@ -748,11 +763,13 @@ void Print_Ctrl::InitIJ(long st, int n, const char *s, int dt, double **x, int j
     }
     buffer = new double[NumVar];
     PrintVar = new double*[NumVar];
+    icol    = new double[NumVar];
     int k = 0;
     for(int i = 0; i < n; i++){
         if(flag_IO[i]){ /* IO is TRUE*/
             PrintVar[k] = &(x[i][j]);
             icol[k] = (double) (i + 1);
+            buffer[k] = 0.0;
             k++;
         }
     }
@@ -764,11 +781,10 @@ void Print_Ctrl::InitIJ(long st, int n, const char *s, int dt, double **x, int j
     }
 }
 Print_Ctrl::~Print_Ctrl(){
-    if(NumVar > 0){
-        if(PrintVar != NULL ) delete[] PrintVar;
-        if(buffer != NULL ) delete[] buffer;
-    }
     close_file();
+    if (PrintVar != NULL) delete[] PrintVar;
+    if (buffer != NULL) delete[] buffer;
+    if (icol != NULL) delete[] icol;
 }
 void Print_Ctrl::fun_printBINARY(double t, double dt){
     fwrite (&t, sizeof (double), 1, fid_bin);
@@ -789,12 +805,21 @@ void Print_Ctrl::fun_printASCII(double t, double dt){
 }
 void Print_Ctrl::close_file(){
     if (Binary){
-        if(fid_bin != NULL)
+        if(fid_bin != NULL) {
             fclose(fid_bin);
+            fid_bin = NULL;
+        }
     }
     if (Ascii){
-        if(fid_asc != NULL)
+        if(fid_asc != NULL) {
             fclose(fid_asc);
+            fid_asc = NULL;
+        }
+    }
+
+    if (sink != NULL && !sink_closed) {
+        sink->onClose();
+        sink_closed = true;
     }
     
 }
@@ -822,6 +847,9 @@ void Print_Ctrl::PrintData(double dt, double t){
         }
         if(Binary){
             fun_printBINARY(t_quantized, dt);
+        }
+        if (sink != NULL) {
+            sink->onWrite(t_quantized, NumVar, buffer);
         }
         for (int i = 0; i < NumVar; i++){
             buffer[i] = 0.;  /* Reset the buffer */
