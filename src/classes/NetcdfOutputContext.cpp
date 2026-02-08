@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -166,6 +167,105 @@ static std::string isoDateFromYYYYMMDD(long yyyymmdd)
     char buf[32];
     snprintf(buf, sizeof(buf), "%04d-%02d-%02d", y, m, d);
     return std::string(buf);
+}
+
+static std::string nowUtcIso8601()
+{
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    gmtime_r(&t, &tm);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return std::string(buf);
+}
+
+struct VarMeta {
+    const char *units;
+    const char *long_name;
+};
+
+static bool lookupVarMeta(const std::string &name, VarMeta &out)
+{
+    static const std::map<std::string, VarMeta> kMeta = {
+        // Element storage (m)
+        {"eleyic", {"m", "interception storage"}},
+        {"eleysnow", {"m", "snow depth"}},
+        {"eleysurf", {"m", "surface water depth"}},
+        {"eleyunsat", {"m", "unsaturated zone storage depth"}},
+        {"eleygw", {"m", "groundwater head"}},
+
+        // Element flux (m/day)
+        {"elevprcp", {"m/day", "precipitation to land"}},
+        {"elevnetprcp", {"m/day", "net precipitation"}},
+        {"elevetp", {"m/day", "potential evapotranspiration"}},
+        {"eleveta", {"m/day", "actual evapotranspiration"}},
+        {"elevrech", {"m/day", "recharge"}},
+        {"elevinfil", {"m/day", "infiltration"}},
+        {"elevexfil", {"m/day", "exfiltration"}},
+        {"elevetic", {"m/day", "evapotranspiration: interception"}},
+        {"elevettr", {"m/day", "evapotranspiration: transpiration"}},
+        {"elevetev", {"m/day", "evapotranspiration: evaporation"}},
+
+        // Element/river exchange (m3/day)
+        {"eleqrsurf", {"m3/day", "element to river surface flow"}},
+        {"eleqrsub", {"m3/day", "element to river subsurface flow"}},
+
+        // Element inter-cell flux (m3/day)
+        {"eleqsub", {"m3/day", "subsurface flow: total"}},
+        {"eleqsub1", {"m3/day", "subsurface flow: direction 1"}},
+        {"eleqsub2", {"m3/day", "subsurface flow: direction 2"}},
+        {"eleqsub3", {"m3/day", "subsurface flow: direction 3"}},
+        {"eleqsurf", {"m3/day", "surface flow: total"}},
+        {"eleqsurf1", {"m3/day", "surface flow: direction 1"}},
+        {"eleqsurf2", {"m3/day", "surface flow: direction 2"}},
+        {"eleqsurf3", {"m3/day", "surface flow: direction 3"}},
+
+        // River (m3/day or m)
+        {"rivqdown", {"m3/day", "river downstream discharge"}},
+        {"rivqup", {"m3/day", "river upstream discharge"}},
+        {"rivqsurf", {"m3/day", "river surface discharge"}},
+        {"rivqsub", {"m3/day", "river subsurface discharge"}},
+        {"rivystage", {"m", "river stage"}},
+
+        // Lake (m / m2 / m3/day / m/day)
+        {"lakystage", {"m", "lake stage"}},
+        {"lakatop", {"m2", "lake top area"}},
+        {"lakvevap", {"m/day", "lake evaporation"}},
+        {"lakvprcp", {"m/day", "lake precipitation"}},
+        {"lakqrivin", {"m3/day", "lake river inflow"}},
+        {"lakqrivout", {"m3/day", "lake river outflow"}},
+        {"lakqsurf", {"m3/day", "lake surface discharge"}},
+        {"lakqsub", {"m3/day", "lake subsurface discharge"}},
+
+        // TSR debug outputs
+        {"rn_h", {"W m-2", "shortwave radiation on horizontal surface"}},
+        {"rn_t", {"W m-2", "terrain-corrected shortwave radiation"}},
+        {"rn_factor", {"1", "terrain radiation correction factor"}},
+    };
+
+    const auto it = kMeta.find(name);
+    if (it == kMeta.end()) {
+        return false;
+    }
+    out = it->second;
+    return true;
+}
+
+static void applyVarMetadata(int ncid, int varid, const std::string &name, const char *path)
+{
+    VarMeta meta{};
+    const bool found = lookupVarMeta(name, meta);
+
+    const std::string long_name = found ? std::string(meta.long_name) : ("SHUD output variable: " + name);
+    ncCheck(nc_put_att_text(ncid, varid, "long_name", long_name.size(), long_name.c_str()),
+            "nc_put_att_text(var.long_name)",
+            path);
+
+    if (found && meta.units != nullptr && meta.units[0] != '\0') {
+        ncCheck(nc_put_att_text(ncid, varid, "units", strlen(meta.units), meta.units),
+                "nc_put_att_text(var.units)",
+                path);
+    }
 }
 
 static std::string deriveVarName(const char *legacy_basename)
@@ -332,9 +432,35 @@ public:
                 "nc_put_att_text(mesh.face_coordinates)",
                 file_path_.c_str());
 
+        // Element index and mask (Phase B: full-dimension outputs)
+        ncCheck(nc_def_var(ncid_, "element_id", NC_INT, 1, face_dims, &var_element_id_),
+                "nc_def_var(element_id)",
+                file_path_.c_str());
+        const int element_start_index = 1;
+        ncCheck(nc_put_att_int(ncid_, var_element_id_, "start_index", NC_INT, 1, &element_start_index),
+                "nc_put_att_int(element_id.start_index)",
+                file_path_.c_str());
+
+        ncCheck(nc_def_var(ncid_, "element_output_mask", NC_INT, 1, face_dims, &var_output_mask_),
+                "nc_def_var(element_output_mask)",
+                file_path_.c_str());
+
         const char *conventions = "CF-1.10 UGRID-1.0";
         ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "Conventions", strlen(conventions), conventions),
                 "nc_put_att_text(global.Conventions)",
+                file_path_.c_str());
+
+        const std::string title = "SHUD output: " + prefix_leaf;
+        ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "title", title.size(), title.c_str()),
+                "nc_put_att_text(global.title)",
+                file_path_.c_str());
+        const char *source = "SHUD";
+        ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "source", strlen(source), source),
+                "nc_put_att_text(global.source)",
+                file_path_.c_str());
+        const std::string history = nowUtcIso8601() + ": created by SHUD";
+        ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "history", history.size(), history.c_str()),
+                "nc_put_att_text(global.history)",
                 file_path_.c_str());
 
         ncCheck(nc_enddef(ncid_), "nc_enddef", file_path_.c_str());
@@ -383,6 +509,12 @@ public:
                 file_path_.c_str());
         ncCheck(nc_put_var_double(ncid_, var_face_x_, face_x.data()), "nc_put_var_double(mesh_face_x)", file_path_.c_str());
         ncCheck(nc_put_var_double(ncid_, var_face_y_, face_y.data()), "nc_put_var_double(mesh_face_y)", file_path_.c_str());
+
+        std::vector<int> element_ids((size_t)n_all_, 0);
+        for (int i = 0; i < n_all_; i++) {
+            element_ids[(size_t)i] = i + 1;
+        }
+        ncCheck(nc_put_var_int(ncid_, var_element_id_, element_ids.data()), "nc_put_var_int(element_id)", file_path_.c_str());
     }
 
     int ensureVar(const std::string &name)
@@ -417,10 +549,36 @@ public:
         ncCheck(nc_put_att_text(ncid_, varid, "coordinates", strlen(coords), coords),
                 "nc_put_att_text(data.coordinates)",
                 file_path_.c_str());
+        applyVarMetadata(ncid_, varid, name, file_path_.c_str());
         ncCheck(nc_enddef(ncid_), "nc_enddef", file_path_.c_str());
 
         varids_[name] = varid;
         return varid;
+    }
+
+    void writeOutputMask(const std::vector<int> &icol_1based)
+    {
+        if (mask_written_) {
+            return;
+        }
+        if (ncid_ == -1 || var_output_mask_ == -1) {
+            fprintf(stderr, "\n  Fatal Error: NetCDF element file is not initialized before writing mask.\n");
+            myexit(ERRFileIO);
+        }
+
+        std::vector<int> mask((size_t)n_all_, 0);
+        for (const int idx1 : icol_1based) {
+            const int idx0 = idx1 - 1;
+            if (idx0 < 0 || idx0 >= n_all_) {
+                continue;
+            }
+            mask[(size_t)idx0] = 1;
+        }
+
+        ncCheck(nc_put_var_int(ncid_, var_output_mask_, mask.data()),
+                "nc_put_var_int(element_output_mask)",
+                file_path_.c_str());
+        mask_written_ = true;
     }
 
     size_t ensureTimeIndex(long long t_min)
@@ -485,8 +643,11 @@ private:
     int var_face_nodes_ = -1;
     int var_face_x_ = -1;
     int var_face_y_ = -1;
+    int var_element_id_ = -1;
+    int var_output_mask_ = -1;
     int n_all_ = 0;
     long forc_start_yyyymmdd_ = 0;
+    bool mask_written_ = false;
 
     const _Node *nodes_ = nullptr;
     int num_nodes_ = 0;
@@ -579,9 +740,27 @@ public:
                 "nc_put_att_int(object_id.start_index)",
                 file_path_.c_str());
 
+        const std::string mask_name = obj_dim_name_ + "_output_mask";
+        ncCheck(nc_def_var(ncid_, mask_name.c_str(), NC_INT, 1, obj_dims, &var_output_mask_),
+                "nc_def_var(output_mask)",
+                file_path_.c_str());
+
         const char *conventions = "CF-1.10 UGRID-1.0";
         ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "Conventions", strlen(conventions), conventions),
                 "nc_put_att_text(global.Conventions)",
+                file_path_.c_str());
+
+        const std::string title = "SHUD output: " + prefix_leaf;
+        ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "title", title.size(), title.c_str()),
+                "nc_put_att_text(global.title)",
+                file_path_.c_str());
+        const char *source = "SHUD";
+        ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "source", strlen(source), source),
+                "nc_put_att_text(global.source)",
+                file_path_.c_str());
+        const std::string history = nowUtcIso8601() + ": created by SHUD";
+        ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "history", history.size(), history.c_str()),
+                "nc_put_att_text(global.history)",
                 file_path_.c_str());
 
         ncCheck(nc_enddef(ncid_), "nc_enddef", file_path_.c_str());
@@ -613,10 +792,35 @@ public:
         ncCheck(nc_put_att_float(ncid_, varid, "_FillValue", NC_FLOAT, 1, &fill_value_),
                 "nc_put_att_float(_FillValue)",
                 file_path_.c_str());
+        applyVarMetadata(ncid_, varid, name, file_path_.c_str());
         ncCheck(nc_enddef(ncid_), "nc_enddef", file_path_.c_str());
 
         varids_[name] = varid;
         return varid;
+    }
+
+    void writeOutputMask(const std::vector<int> &icol_1based)
+    {
+        if (mask_written_) {
+            return;
+        }
+        if (ncid_ == -1 || var_output_mask_ == -1) {
+            fprintf(stderr, "\n  Fatal Error: NetCDF output file is not initialized before writing mask.\n");
+            myexit(ERRFileIO);
+        }
+
+        std::vector<int> mask((size_t)n_all_, 0);
+        for (const int idx1 : icol_1based) {
+            const int idx0 = idx1 - 1;
+            if (idx0 < 0 || idx0 >= n_all_) {
+                continue;
+            }
+            mask[(size_t)idx0] = 1;
+        }
+
+        const std::string mask_name = obj_dim_name_ + "_output_mask";
+        ncCheck(nc_put_var_int(ncid_, var_output_mask_, mask.data()), ("nc_put_var_int(" + mask_name + ")").c_str(), file_path_.c_str());
+        mask_written_ = true;
     }
 
     size_t ensureTimeIndex(long long t_min)
@@ -678,8 +882,10 @@ private:
     int dim_obj_ = -1;
     int var_time_ = -1;
     int var_obj_id_ = -1;
+    int var_output_mask_ = -1;
     int n_all_ = 0;
     long forc_start_yyyymmdd_ = 0;
+    bool mask_written_ = false;
 
     std::map<std::string, int> varids_;
     std::map<long long, size_t> time_to_idx_;
@@ -712,6 +918,7 @@ public:
         }
 
         file_->openIfNeeded(legacy_basename, start_yyyymmdd, n_all_);
+        file_->writeOutputMask(icol_);
         varid_ = file_->ensureVar(var_name_);
         initialized_ = true;
     }
@@ -778,6 +985,7 @@ public:
         }
 
         file_->openIfNeeded(legacy_basename, start_yyyymmdd, n_all_);
+        file_->writeOutputMask(icol_);
         varid_ = file_->ensureVar(var_name_);
         initialized_ = true;
     }
