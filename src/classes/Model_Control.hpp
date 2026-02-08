@@ -43,14 +43,33 @@ static inline const char* SolarLonLatModeName(SolarLonLatMode mode)
     }
 }
 
+class IPrintSink {
+public:
+    virtual ~IPrintSink() = default;
+    virtual void onInit(const char *legacy_basename,
+                        long start_yyyymmdd,
+                        int interval_min,
+                        int n_all,
+                        int num_selected,
+                        const double *icol_1based,
+                        int radiation_input_mode,
+                        int terrain_radiation,
+                        int solar_lonlat_mode,
+                        double solar_lon_deg,
+                        double solar_lat_deg) = 0;
+    virtual void onWrite(double t_quantized_min, int num_selected, const double *buffer) = 0;
+    virtual void onClose() = 0;
+};
+
 class Print_Ctrl{
 private:
     char    filename[MAXLEN];
     char    header[1024];
     int     Interval = NA_VALUE;
     int     NumVar = NA_VALUE;
+    int     NumAll = NA_VALUE; /* full dimension (NumEle/NumRiv/NumLake) */
     int     NumUpdate = 0;
-    double  *icol;
+    double  *icol = NULL;
     double  **PrintVar = NULL;
     double  *buffer = NULL;
     int     Binary = 1;
@@ -61,9 +80,19 @@ private:
     char    filea[MAXLEN];
     char    fileb[MAXLEN];
     long    StartTime;
+    IPrintSink *sink = NULL;
+    bool sink_closed = false;
 public:
     Print_Ctrl();
     ~Print_Ctrl();
+    void setSink(IPrintSink *s) {
+        sink = s;
+        sink_closed = false;
+    }
+    int numAll() const { return NumAll; }
+    int numSelected() const { return NumVar; }
+    const double *icolSelected() const { return icol; }
+    const char *legacyBasename() const { return filename; }
     void    open_file(int a,
                       int b,
                       int radiation_input_mode,
