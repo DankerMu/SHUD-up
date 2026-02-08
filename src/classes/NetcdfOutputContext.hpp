@@ -11,10 +11,16 @@
 #include <memory>
 
 class IPrintSink;
+class _Element;
+class _Node;
 
 class NetcdfOutputContext {
 public:
-    explicit NetcdfOutputContext(const char *ncoutput_cfg_path);
+    NetcdfOutputContext(const char *ncoutput_cfg_path,
+                        const _Node *nodes,
+                        int num_nodes,
+                        const _Element *elements,
+                        int num_elements);
     ~NetcdfOutputContext();
 
     IPrintSink *createElementSink();
@@ -27,4 +33,3 @@ private:
 #endif /* _NETCDF_ON */
 
 #endif /* NetcdfOutputContext_hpp */
-

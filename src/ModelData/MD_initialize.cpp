@@ -344,7 +344,7 @@ void Model_Data:: initialize_output (){
 
 #ifdef _NETCDF_ON
     if (CS.output_mode == OUTPUT_NETCDF || CS.output_mode == OUTPUT_BOTH) {
-        ncoutput = std::make_unique<NetcdfOutputContext>(CS.ncoutput_cfg);
+        ncoutput = std::make_unique<NetcdfOutputContext>(CS.ncoutput_cfg, Node, NumNode, Ele, NumEle);
         for (int i = 0; i < CS.NumPrint; i++) {
             if (CS.PCtrl[i].numAll() == NumEle) {
                 CS.PCtrl[i].setSink(ncoutput->createElementSink());
