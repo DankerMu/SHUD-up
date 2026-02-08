@@ -17,6 +17,10 @@ Build
 DerivedData
 *.xcodeproj
 .github
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml
+!.github/workflows/*.yaml
 SHUD.*
 .Rproj.user
 .DS_Store

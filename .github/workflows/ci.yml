@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-baseline:
+    name: Build (baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ make libsundials-dev
+
+      - name: Build
+        run: |
+          make clean
+          make shud SUNDIALS_DIR=/usr
+
+  build-netcdf:
+    name: Build (NETCDF=1)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ make pkg-config libsundials-dev libnetcdf-dev
+
+      - name: Build
+        run: |
+          make clean
+          make shud SUNDIALS_DIR=/usr NETCDF=1
