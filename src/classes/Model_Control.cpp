@@ -180,6 +180,44 @@ void Control_Data::read(const char *fn){
             strncpy(forcing_cfg, cfg_str, MAXLEN - 1);
             forcing_cfg[MAXLEN - 1] = '\0';
         }
+        else if (strcasecmp("OUTPUT_MODE", optstr) == 0) {
+            const OutputMode default_mode = OUTPUT_LEGACY;
+            char mode_str[MAXLEN] = "";
+            output_mode = default_mode;
+            if (sscanf(str, "%s %s", optstr, mode_str) != 2) {
+                fprintf(stderr,
+                        "WARNING: OUTPUT_MODE missing value in %s; using default LEGACY (%d).\n",
+                        fn,
+                        default_mode);
+            } else if (strcasecmp(mode_str, "LEGACY") == 0) {
+                output_mode = OUTPUT_LEGACY;
+            } else if (strcasecmp(mode_str, "NETCDF") == 0) {
+                output_mode = OUTPUT_NETCDF;
+            } else if (strcasecmp(mode_str, "BOTH") == 0) {
+                output_mode = OUTPUT_BOTH;
+            } else {
+                char *endptr = NULL;
+                const double mode_val = strtod(mode_str, &endptr);
+                if (endptr != NULL && *endptr == '\0' && (mode_val == 0.0 || mode_val == 1.0 || mode_val == 2.0)) {
+                    output_mode = (mode_val == 1.0) ? OUTPUT_NETCDF : (mode_val == 2.0 ? OUTPUT_BOTH : OUTPUT_LEGACY);
+                } else {
+                    fprintf(stderr,
+                            "ERROR: invalid OUTPUT_MODE value '%s' in %s. Valid values: LEGACY/NETCDF/BOTH or 0/1/2.\n",
+                            mode_str,
+                            fn);
+                    myexit(ERRFileIO);
+                }
+            }
+        }
+        else if (strcasecmp("NCOUTPUT_CFG", optstr) == 0) {
+            char cfg_str[MAXLEN] = "";
+            if (sscanf(str, "%s %s", optstr, cfg_str) != 2) {
+                fprintf(stderr, "ERROR: NCOUTPUT_CFG missing value in %s.\n", fn);
+                myexit(ERRFileIO);
+            }
+            strncpy(ncoutput_cfg, cfg_str, MAXLEN - 1);
+            ncoutput_cfg[MAXLEN - 1] = '\0';
+        }
         else if (strcasecmp("RADIATION_INPUT_MODE", optstr) == 0) {
             const int default_mode = SWDOWN;
             char mode_str[MAXLEN] = "";
@@ -459,11 +497,59 @@ void Control_Data::read(const char *fn){
         forcing_cfg[MAXLEN - 1] = '\0';
     }
 
+    if (output_mode == OUTPUT_NETCDF || output_mode == OUTPUT_BOTH) {
+        if (ncoutput_cfg[0] == '\0') {
+            fprintf(stderr,
+                    "ERROR: OUTPUT_MODE includes NETCDF and requires NCOUTPUT_CFG <path> in %s (relative paths are relative to the input directory).\n",
+                    fn);
+            myexit(ERRFileIO);
+        }
+
+        char base_dir[MAXLEN];
+        strncpy(base_dir, fn, MAXLEN - 1);
+        base_dir[MAXLEN - 1] = '\0';
+        char *last_slash = strrchr(base_dir, '/');
+        char *last_bslash = strrchr(base_dir, '\\');
+        if (last_bslash != NULL && (last_slash == NULL || last_bslash > last_slash)) {
+            last_slash = last_bslash;
+        }
+        if (last_slash != NULL) {
+            *last_slash = '\0';
+        } else {
+            strcpy(base_dir, ".");
+        }
+
+        const bool is_abs = (ncoutput_cfg[0] == '/' || ncoutput_cfg[0] == '\\' ||
+                             (isalpha((unsigned char)ncoutput_cfg[0]) && ncoutput_cfg[1] == ':'));
+        char resolved[MAXLEN];
+        if (is_abs) {
+            strncpy(resolved, ncoutput_cfg, MAXLEN - 1);
+            resolved[MAXLEN - 1] = '\0';
+        } else {
+            snprintf(resolved, MAXLEN, "%s/%s", base_dir, ncoutput_cfg);
+        }
+
+        FILE *fp_cfg = fopen(resolved, "r");
+        if (fp_cfg == NULL) {
+            fprintf(stderr,
+                    "ERROR: NCOUTPUT_CFG is not readable: %s (from %s).\n",
+                    resolved,
+                    fn);
+            myexit(ERRFileIO);
+        }
+        fclose(fp_cfg);
+        strncpy(ncoutput_cfg, resolved, MAXLEN - 1);
+        ncoutput_cfg[MAXLEN - 1] = '\0';
+    }
+
     updateSimPeriod();
     if (Verbose || global_verbose_mode){
         fprintf(stdout, "* \t ETStep: %.2f min\n", ETStep);
     }
     fprintf(stdout, "* \t FORCING_MODE: %s\n", forcing_mode == FORCING_NETCDF ? "NETCDF" : "CSV");
+    const char *out_mode_str =
+        output_mode == OUTPUT_NETCDF ? "NETCDF" : (output_mode == OUTPUT_BOTH ? "BOTH" : "LEGACY");
+    fprintf(stdout, "* \t OUTPUT_MODE: %s\n", out_mode_str);
     fprintf(stdout, "* \t RADIATION_INPUT_MODE: %s\n",
             radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
     fprintf(stdout, "* \t SOLAR_LONLAT_MODE: %s\n", SolarLonLatModeName(solar_lonlat_mode));
