@@ -23,9 +23,9 @@ public:
                         int num_elements);
     ~NetcdfOutputContext();
 
-    IPrintSink *createElementSink();
-    IPrintSink *createRiverSink();
-    IPrintSink *createLakeSink();
+    std::shared_ptr<IPrintSink> createElementSink();
+    std::shared_ptr<IPrintSink> createRiverSink();
+    std::shared_ptr<IPrintSink> createLakeSink();
 
 private:
     struct Impl;

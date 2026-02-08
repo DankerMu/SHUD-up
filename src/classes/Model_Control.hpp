@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <memory>
 #include "Macros.hpp"
 #include "ModelConfigure.hpp"
 
@@ -80,12 +81,12 @@ private:
     char    filea[MAXLEN];
     char    fileb[MAXLEN];
     long    StartTime;
-    IPrintSink *sink = NULL;
+    std::shared_ptr<IPrintSink> sink;
     bool sink_closed = false;
 public:
     Print_Ctrl();
     ~Print_Ctrl();
-    void setSink(IPrintSink *s) {
+    void setSink(std::shared_ptr<IPrintSink> s) {
         sink = s;
         sink_closed = false;
     }

@@ -708,7 +708,7 @@ void Print_Ctrl::open_file(int a,
              solar_lon_deg,
              solar_lat_deg);
 
-    if (sink != NULL) {
+    if (sink) {
         sink->onInit(filename,
                      StartTime,
                      Interval,
@@ -921,7 +921,7 @@ void Print_Ctrl::close_file(){
         }
     }
 
-    if (sink != NULL && !sink_closed) {
+    if (sink && !sink_closed) {
         sink->onClose();
         sink_closed = true;
     }
@@ -952,7 +952,7 @@ void Print_Ctrl::PrintData(double dt, double t){
         if(Binary){
             fun_printBINARY(t_quantized, dt);
         }
-        if (sink != NULL) {
+        if (sink) {
             sink->onWrite(t_quantized, NumVar, buffer);
         }
         for (int i = 0; i < NumVar; i++){
