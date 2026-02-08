@@ -348,6 +348,10 @@ void Model_Data:: initialize_output (){
         for (int i = 0; i < CS.NumPrint; i++) {
             if (CS.PCtrl[i].numAll() == NumEle) {
                 CS.PCtrl[i].setSink(ncoutput->createElementSink());
+            } else if (NumRiv > 0 && CS.PCtrl[i].numAll() == NumRiv) {
+                CS.PCtrl[i].setSink(ncoutput->createRiverSink());
+            } else if (NumLake > 0 && CS.PCtrl[i].numAll() == NumLake) {
+                CS.PCtrl[i].setSink(ncoutput->createLakeSink());
             }
         }
     }
