@@ -88,6 +88,29 @@ LK_FLAGS = -lm -lsundials_cvode -lsundials_nvecserial
 LK_OMP	= -Xpreprocessor -fopenmp -lomp -lsundials_nvecopenmp
 LK_DYLN = "LD_LIBRARY_PATH=${LIB_SUN}"
 
+# Optional NetCDF support (disabled by default)
+NETCDF ?= 0
+NETCDF_CFLAGS :=
+NETCDF_LIBS :=
+
+ifeq ($(NETCDF),1)
+NETCDF_CFLAGS := $(shell nc-config --cflags 2>/dev/null)
+NETCDF_LIBS := $(shell nc-config --libs 2>/dev/null)
+ifeq ($(strip $(NETCDF_CFLAGS)),)
+NETCDF_CFLAGS := $(shell pkg-config --cflags netcdf 2>/dev/null)
+endif
+ifeq ($(strip $(NETCDF_LIBS)),)
+NETCDF_LIBS := $(shell pkg-config --libs netcdf 2>/dev/null)
+endif
+ifeq ($(strip $(NETCDF_LIBS)),)
+$(error NETCDF=1 but NetCDF was not found. Install netcdf-c and ensure `nc-config` or `pkg-config netcdf` is available)
+endif
+
+CFLAGS += -D_NETCDF_ON
+INCLUDES += $(NETCDF_CFLAGS)
+LK_FLAGS += $(NETCDF_LIBS)
+endif
+
 all:
 	make clean
 	make shud
@@ -115,6 +138,11 @@ cvode CVODE:
 
 shud SHUD: ${MAIN_shud} $(SRC) $(SRC_H)
 	@echo '...Compiling shud ...'
+	@if [ "$(NETCDF)" = "1" ]; then \
+	  echo "NETCDF enabled"; \
+	  echo "  NETCDF_CFLAGS=$(NETCDF_CFLAGS)"; \
+	  echo "  NETCDF_LIBS=$(NETCDF_LIBS)"; \
+	fi
 	@echo  $(CC) $(CFLAGS) ${STCFLAG} ${INCLUDES} ${LIBRARIES} ${RPATH} -o ${TARGET_EXEC} ${MAIN_shud} $(SRC)  $(LK_FLAGS)
 	@echo
 	@echo
@@ -126,6 +154,11 @@ shud SHUD: ${MAIN_shud} $(SRC) $(SRC_H)
 
 shud_omp: ${MAIN_OMP}  $(SRC) $(SRC_H)
 	@echo '...Compiling shud_OpenMP ...'
+	@if [ "$(NETCDF)" = "1" ]; then \
+	  echo "NETCDF enabled"; \
+	  echo "  NETCDF_CFLAGS=$(NETCDF_CFLAGS)"; \
+	  echo "  NETCDF_LIBS=$(NETCDF_LIBS)"; \
+	fi
 	@echo $(CC) $(CFLAGS) ${STCFLAG} ${RPATH} -D_OPENMP_ON ${INCLUDES} ${LIBRARIES} -o ${TARGET_OMP}   ${MAIN_OMP} $(SRC)  $(LK_FLAGS) $(LK_OMP)
 	@echo
 	@echo
@@ -150,7 +183,6 @@ clean:
 	@echo
 	@echo "Done."
 	@echo
-
 
 
 
