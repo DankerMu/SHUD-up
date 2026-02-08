@@ -2,7 +2,9 @@
 
 #ifdef _NETCDF_ON
 
+#include "Element.hpp"
 #include "Model_Control.hpp"
+#include "Node.hpp"
 
 #include <netcdf.h>
 
@@ -198,8 +200,18 @@ static std::string derivePrefixLeaf(const char *legacy_basename)
 
 class NetcdfElementFile {
 public:
-    explicit NetcdfElementFile(std::string out_dir_abs, float fill_value)
-        : out_dir_abs_(std::move(out_dir_abs)), fill_value_(fill_value)
+    NetcdfElementFile(std::string out_dir_abs,
+                      float fill_value,
+                      const _Node *nodes,
+                      int num_nodes,
+                      const _Element *elements,
+                      int num_elements)
+        : out_dir_abs_(std::move(out_dir_abs)),
+          fill_value_(fill_value),
+          nodes_(nodes),
+          num_nodes_(num_nodes),
+          elements_(elements),
+          num_elements_(num_elements)
     {
     }
 
@@ -219,6 +231,11 @@ public:
 
         n_all_ = n_all;
         forc_start_yyyymmdd_ = forc_start_yyyymmdd;
+        if (num_elements_ > 0 && n_all_ != num_elements_) {
+            fprintf(stderr, "\n  Fatal Error: mesh_face dimension mismatch for NetCDF element output.\n");
+            fprintf(stderr, "  Expected NumEle=%d, got n_all=%d\n", num_elements_, n_all_);
+            myexit(ERRFileIO);
+        }
 
         const std::string prefix_leaf = derivePrefixLeaf(legacy_basename);
 
@@ -238,6 +255,12 @@ public:
 
         ncCheck(nc_def_dim(ncid_, "time", NC_UNLIMITED, &dim_time_), "nc_def_dim(time)", file_path_.c_str());
         ncCheck(nc_def_dim(ncid_, "mesh_face", (size_t)n_all_, &dim_face_), "nc_def_dim(mesh_face)", file_path_.c_str());
+        ncCheck(nc_def_dim(ncid_, "mesh_node", (size_t)num_nodes_, &dim_node_),
+                "nc_def_dim(mesh_node)",
+                file_path_.c_str());
+        ncCheck(nc_def_dim(ncid_, "max_face_nodes", 3, &dim_max_face_nodes_),
+                "nc_def_dim(max_face_nodes)",
+                file_path_.c_str());
 
         const int time_dims[1] = {dim_time_};
         ncCheck(nc_def_var(ncid_, "time", NC_DOUBLE, 1, time_dims, &var_time_), "nc_def_var(time)", file_path_.c_str());
@@ -252,7 +275,114 @@ public:
                 "nc_put_att_text(time.calendar)",
                 file_path_.c_str());
 
+        // UGRID mesh topology and coordinates (Phase B)
+        const int node_dims[1] = {dim_node_};
+        ncCheck(nc_def_var(ncid_, "mesh_node_x", NC_DOUBLE, 1, node_dims, &var_node_x_),
+                "nc_def_var(mesh_node_x)",
+                file_path_.c_str());
+        ncCheck(nc_def_var(ncid_, "mesh_node_y", NC_DOUBLE, 1, node_dims, &var_node_y_),
+                "nc_def_var(mesh_node_y)",
+                file_path_.c_str());
+        const char *xname = "projection_x_coordinate";
+        const char *yname = "projection_y_coordinate";
+        ncCheck(nc_put_att_text(ncid_, var_node_x_, "standard_name", strlen(xname), xname),
+                "nc_put_att_text(mesh_node_x.standard_name)",
+                file_path_.c_str());
+        ncCheck(nc_put_att_text(ncid_, var_node_y_, "standard_name", strlen(yname), yname),
+                "nc_put_att_text(mesh_node_y.standard_name)",
+                file_path_.c_str());
+
+        const int face_node_dims[2] = {dim_face_, dim_max_face_nodes_};
+        ncCheck(nc_def_var(ncid_, "mesh_face_nodes", NC_INT, 2, face_node_dims, &var_face_nodes_),
+                "nc_def_var(mesh_face_nodes)",
+                file_path_.c_str());
+        const int start_index = 1;
+        ncCheck(nc_put_att_int(ncid_, var_face_nodes_, "start_index", NC_INT, 1, &start_index),
+                "nc_put_att_int(mesh_face_nodes.start_index)",
+                file_path_.c_str());
+
+        const int face_dims[1] = {dim_face_};
+        ncCheck(nc_def_var(ncid_, "mesh_face_x", NC_DOUBLE, 1, face_dims, &var_face_x_),
+                "nc_def_var(mesh_face_x)",
+                file_path_.c_str());
+        ncCheck(nc_def_var(ncid_, "mesh_face_y", NC_DOUBLE, 1, face_dims, &var_face_y_),
+                "nc_def_var(mesh_face_y)",
+                file_path_.c_str());
+
+        int var_mesh_ = -1;
+        ncCheck(nc_def_var(ncid_, "mesh", NC_INT, 0, nullptr, &var_mesh_), "nc_def_var(mesh)", file_path_.c_str());
+        const char *cf_role = "mesh_topology";
+        ncCheck(nc_put_att_text(ncid_, var_mesh_, "cf_role", strlen(cf_role), cf_role),
+                "nc_put_att_text(mesh.cf_role)",
+                file_path_.c_str());
+        const int topo_dim = 2;
+        ncCheck(nc_put_att_int(ncid_, var_mesh_, "topology_dimension", NC_INT, 1, &topo_dim),
+                "nc_put_att_int(mesh.topology_dimension)",
+                file_path_.c_str());
+        const char *node_coords = "mesh_node_x mesh_node_y";
+        ncCheck(nc_put_att_text(ncid_, var_mesh_, "node_coordinates", strlen(node_coords), node_coords),
+                "nc_put_att_text(mesh.node_coordinates)",
+                file_path_.c_str());
+        const char *face_nodes = "mesh_face_nodes";
+        ncCheck(nc_put_att_text(ncid_, var_mesh_, "face_node_connectivity", strlen(face_nodes), face_nodes),
+                "nc_put_att_text(mesh.face_node_connectivity)",
+                file_path_.c_str());
+        const char *face_coords = "mesh_face_x mesh_face_y";
+        ncCheck(nc_put_att_text(ncid_, var_mesh_, "face_coordinates", strlen(face_coords), face_coords),
+                "nc_put_att_text(mesh.face_coordinates)",
+                file_path_.c_str());
+
+        const char *conventions = "CF-1.10 UGRID-1.0";
+        ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "Conventions", strlen(conventions), conventions),
+                "nc_put_att_text(global.Conventions)",
+                file_path_.c_str());
+
         ncCheck(nc_enddef(ncid_), "nc_enddef", file_path_.c_str());
+
+        // Write mesh coordinate/connectivity data.
+        if (num_nodes_ > 0 && nodes_ == nullptr) {
+            fprintf(stderr, "\n  Fatal Error: mesh nodes are not available for NetCDF output.\n");
+            myexit(ERRFileIO);
+        }
+        if (num_elements_ > 0 && elements_ == nullptr) {
+            fprintf(stderr, "\n  Fatal Error: mesh elements are not available for NetCDF output.\n");
+            myexit(ERRFileIO);
+        }
+
+        std::vector<double> node_x((size_t)num_nodes_, NA_VALUE);
+        std::vector<double> node_y((size_t)num_nodes_, NA_VALUE);
+        for (int i = 0; i < num_nodes_; i++) {
+            const int idx1 = nodes_[i].index;
+            if (idx1 < 1 || idx1 > num_nodes_) {
+                fprintf(stderr, "\n  Fatal Error: invalid node index %d (NumNode=%d).\n", idx1, num_nodes_);
+                myexit(ERRFileIO);
+            }
+            node_x[(size_t)(idx1 - 1)] = nodes_[i].x;
+            node_y[(size_t)(idx1 - 1)] = nodes_[i].y;
+        }
+        ncCheck(nc_put_var_double(ncid_, var_node_x_, node_x.data()), "nc_put_var_double(mesh_node_x)", file_path_.c_str());
+        ncCheck(nc_put_var_double(ncid_, var_node_y_, node_y.data()), "nc_put_var_double(mesh_node_y)", file_path_.c_str());
+
+        std::vector<int> face_nodes_buf((size_t)num_elements_ * 3u, 0);
+        std::vector<double> face_x((size_t)num_elements_, NA_VALUE);
+        std::vector<double> face_y((size_t)num_elements_, NA_VALUE);
+        for (int e = 0; e < num_elements_; e++) {
+            for (int k = 0; k < 3; k++) {
+                const int n1 = elements_[e].node[k];
+                if (n1 < 1 || n1 > num_nodes_) {
+                    fprintf(stderr, "\n  Fatal Error: invalid element node index %d (NumNode=%d).\n", n1, num_nodes_);
+                    myexit(ERRFileIO);
+                }
+                face_nodes_buf[(size_t)e * 3u + (size_t)k] = n1;
+            }
+            face_x[(size_t)e] = elements_[e].x;
+            face_y[(size_t)e] = elements_[e].y;
+        }
+        ncCheck(nc_put_var_int(ncid_, var_face_nodes_, face_nodes_buf.data()),
+                "nc_put_var_int(mesh_face_nodes)",
+                file_path_.c_str());
+        ncCheck(nc_put_var_double(ncid_, var_face_x_, face_x.data()), "nc_put_var_double(mesh_face_x)", file_path_.c_str());
+        ncCheck(nc_put_var_double(ncid_, var_face_y_, face_y.data()), "nc_put_var_double(mesh_face_y)", file_path_.c_str());
     }
 
     int ensureVar(const std::string &name)
@@ -274,6 +404,18 @@ public:
                 file_path_.c_str());
         ncCheck(nc_put_att_float(ncid_, varid, "_FillValue", NC_FLOAT, 1, &fill_value_),
                 "nc_put_att_float(_FillValue)",
+                file_path_.c_str());
+        const char *mesh = "mesh";
+        ncCheck(nc_put_att_text(ncid_, varid, "mesh", strlen(mesh), mesh),
+                "nc_put_att_text(data.mesh)",
+                file_path_.c_str());
+        const char *loc = "face";
+        ncCheck(nc_put_att_text(ncid_, varid, "location", strlen(loc), loc),
+                "nc_put_att_text(data.location)",
+                file_path_.c_str());
+        const char *coords = "mesh_face_x mesh_face_y";
+        ncCheck(nc_put_att_text(ncid_, varid, "coordinates", strlen(coords), coords),
+                "nc_put_att_text(data.coordinates)",
                 file_path_.c_str());
         ncCheck(nc_enddef(ncid_), "nc_enddef", file_path_.c_str());
 
@@ -335,9 +477,21 @@ private:
     int ncid_ = -1;
     int dim_time_ = -1;
     int dim_face_ = -1;
+    int dim_node_ = -1;
+    int dim_max_face_nodes_ = -1;
     int var_time_ = -1;
+    int var_node_x_ = -1;
+    int var_node_y_ = -1;
+    int var_face_nodes_ = -1;
+    int var_face_x_ = -1;
+    int var_face_y_ = -1;
     int n_all_ = 0;
     long forc_start_yyyymmdd_ = 0;
+
+    const _Node *nodes_ = nullptr;
+    int num_nodes_ = 0;
+    const _Element *elements_ = nullptr;
+    int num_elements_ = 0;
 
     std::map<std::string, int> varids_;
     std::map<long long, size_t> time_to_idx_;
@@ -453,10 +607,10 @@ struct NetcdfOutputContext::Impl {
     NetcdfElementFile ele_file;
     std::vector<std::unique_ptr<IPrintSink>> sinks;
 
-    explicit Impl(const char *path)
+    Impl(const char *path, const _Node *nodes, int num_nodes, const _Element *elements, int num_elements)
         : ncoutput_cfg_path(path ? path : ""),
           cfg(parseNcOutputCfg(ncoutput_cfg_path)),
-          ele_file(cfg.out_dir_abs, 9.96921e36f)
+          ele_file(cfg.out_dir_abs, 9.96921e36f, nodes, num_nodes, elements, num_elements)
     {
     }
 
@@ -469,8 +623,12 @@ struct NetcdfOutputContext::Impl {
     }
 };
 
-NetcdfOutputContext::NetcdfOutputContext(const char *ncoutput_cfg_path)
-    : impl_(std::make_unique<Impl>(ncoutput_cfg_path))
+NetcdfOutputContext::NetcdfOutputContext(const char *ncoutput_cfg_path,
+                                         const _Node *nodes,
+                                         int num_nodes,
+                                         const _Element *elements,
+                                         int num_elements)
+    : impl_(std::make_unique<Impl>(ncoutput_cfg_path, nodes, num_nodes, elements, num_elements))
 {
 }
 
@@ -482,4 +640,3 @@ IPrintSink *NetcdfOutputContext::createElementSink()
 }
 
 #endif /* _NETCDF_ON */
-
