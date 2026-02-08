@@ -6,6 +6,7 @@
 
 #include "Model_Control.hpp"
 
+#include <cctype>
 #include <cmath>
 void PrintOutDt::defaultmode(){
     int dt = 1440;
@@ -143,6 +144,42 @@ void Control_Data::read(const char *fn){
             UpdateICStep =  val;
         else if (strcasecmp ("ET_Mode", optstr) == 0)
             ET_Mode =  val;
+        else if (strcasecmp("FORCING_MODE", optstr) == 0) {
+            const ForcingMode default_mode = FORCING_CSV;
+            char mode_str[MAXLEN] = "";
+            forcing_mode = default_mode;
+            if (sscanf(str, "%s %s", optstr, mode_str) != 2) {
+                fprintf(stderr,
+                        "WARNING: FORCING_MODE missing value in %s; using default CSV (%d).\n",
+                        fn,
+                        default_mode);
+            } else if (strcasecmp(mode_str, "CSV") == 0) {
+                forcing_mode = FORCING_CSV;
+            } else if (strcasecmp(mode_str, "NETCDF") == 0) {
+                forcing_mode = FORCING_NETCDF;
+            } else {
+                char *endptr = NULL;
+                const double mode_val = strtod(mode_str, &endptr);
+                if (endptr != NULL && *endptr == '\0' && (mode_val == 0.0 || mode_val == 1.0)) {
+                    forcing_mode = (mode_val == 1.0) ? FORCING_NETCDF : FORCING_CSV;
+                } else {
+                    fprintf(stderr,
+                            "ERROR: invalid FORCING_MODE value '%s' in %s. Valid values: CSV/NETCDF or 0/1.\n",
+                            mode_str,
+                            fn);
+                    myexit(ERRFileIO);
+                }
+            }
+        }
+        else if (strcasecmp("FORCING_CFG", optstr) == 0) {
+            char cfg_str[MAXLEN] = "";
+            if (sscanf(str, "%s %s", optstr, cfg_str) != 2) {
+                fprintf(stderr, "ERROR: FORCING_CFG missing value in %s.\n", fn);
+                myexit(ERRFileIO);
+            }
+            strncpy(forcing_cfg, cfg_str, MAXLEN - 1);
+            forcing_cfg[MAXLEN - 1] = '\0';
+        }
         else if (strcasecmp("RADIATION_INPUT_MODE", optstr) == 0) {
             const int default_mode = SWDOWN;
             char mode_str[MAXLEN] = "";
@@ -376,10 +413,57 @@ void Control_Data::read(const char *fn){
     }
     SolverStep = MaxStep; // Improve it in future for overcasting.
     fclose (fp);
+
+    if (forcing_mode == FORCING_NETCDF) {
+        if (forcing_cfg[0] == '\0') {
+            fprintf(stderr,
+                    "ERROR: FORCING_MODE=NETCDF requires FORCING_CFG <path> in %s (relative paths are relative to the input directory).\n",
+                    fn);
+            myexit(ERRFileIO);
+        }
+
+        char base_dir[MAXLEN];
+        strncpy(base_dir, fn, MAXLEN - 1);
+        base_dir[MAXLEN - 1] = '\0';
+        char *last_slash = strrchr(base_dir, '/');
+        char *last_bslash = strrchr(base_dir, '\\');
+        if (last_bslash != NULL && (last_slash == NULL || last_bslash > last_slash)) {
+            last_slash = last_bslash;
+        }
+        if (last_slash != NULL) {
+            *last_slash = '\0';
+        } else {
+            strcpy(base_dir, ".");
+        }
+
+        const bool is_abs = (forcing_cfg[0] == '/' || forcing_cfg[0] == '\\' ||
+                             (isalpha((unsigned char)forcing_cfg[0]) && forcing_cfg[1] == ':'));
+        char resolved[MAXLEN];
+        if (is_abs) {
+            strncpy(resolved, forcing_cfg, MAXLEN - 1);
+            resolved[MAXLEN - 1] = '\0';
+        } else {
+            snprintf(resolved, MAXLEN, "%s/%s", base_dir, forcing_cfg);
+        }
+
+        FILE *fp_cfg = fopen(resolved, "r");
+        if (fp_cfg == NULL) {
+            fprintf(stderr,
+                    "ERROR: FORCING_CFG is not readable: %s (from %s).\n",
+                    resolved,
+                    fn);
+            myexit(ERRFileIO);
+        }
+        fclose(fp_cfg);
+        strncpy(forcing_cfg, resolved, MAXLEN - 1);
+        forcing_cfg[MAXLEN - 1] = '\0';
+    }
+
     updateSimPeriod();
     if (Verbose || global_verbose_mode){
         fprintf(stdout, "* \t ETStep: %.2f min\n", ETStep);
     }
+    fprintf(stdout, "* \t FORCING_MODE: %s\n", forcing_mode == FORCING_NETCDF ? "NETCDF" : "CSV");
     fprintf(stdout, "* \t RADIATION_INPUT_MODE: %s\n",
             radiation_input_mode == SWNET ? "SWNET" : "SWDOWN");
     fprintf(stdout, "* \t SOLAR_LONLAT_MODE: %s\n", SolarLonLatModeName(solar_lonlat_mode));

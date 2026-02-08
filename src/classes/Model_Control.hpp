@@ -22,6 +22,11 @@ enum SolarLonLatMode{
     FIXED = 2
 };
 
+enum ForcingMode{
+    FORCING_CSV = 0,
+    FORCING_NETCDF = 1
+};
+
 static inline const char* SolarLonLatModeName(SolarLonLatMode mode)
 {
     switch (mode) {
@@ -115,6 +120,8 @@ private:
     double DayStart = 0;    /* START Day [Day] */
     double DayEnd = 10;     /* END Day [Day] */
 public:
+    ForcingMode forcing_mode = FORCING_CSV; /* FORCING_MODE: CSV (default) or NETCDF */
+    char forcing_cfg[MAXLEN] = "";          /* FORCING_CFG: path (required when FORCING_MODE=NETCDF) */
     int Verbose = 0;
     int CloseBoundary = 1; /* Whether the close boundary exist. 1 = no boundary flux. 0 = Default boundary flux. [bool]*/
     int Ascii = 0;      /* Whether export result as ASCII File [bool]*/
