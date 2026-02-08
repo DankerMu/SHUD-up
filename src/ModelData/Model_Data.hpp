@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <vector>
 #include "TimeSeriesData.hpp"
+#include "ForcingProvider.hpp"
 #include "ModelConfigure.hpp"
 #include "IO.hpp"
 #include "River.hpp"
@@ -73,6 +74,7 @@ public:
     int *io_ele, *io_riv, *io_lake; /* Wether Export the data of these elements */
     
     _TimeSeriesData *tsd_weather;
+    ForcingProvider *forcing = nullptr;
     _TimeSeriesData tsd_LAI;
 //    _TimeSeriesData tsd_RL;
     _TimeSeriesData tsd_MF;
@@ -326,6 +328,7 @@ private:
     void read_soil(const char *fn);
     void read_geol(const char *fn);
     void read_lc(const char *fn);
+    void read_forc(const char *fn);
     void read_forc_csv(const char *fn);
 //    void read_rl(const char *fn);
     void read_lai(const char *fn);

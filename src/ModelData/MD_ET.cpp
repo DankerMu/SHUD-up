@@ -22,21 +22,47 @@ void Model_Data::tReadForcing(double t, int i){
     int idx = Ele[i].iForc - 1;
     double etp, ra, rs, t0, hc, U2, Uz, Zmeasure, lai;
     double GroundHeatFlux, RG;
-    t_prcp[i] = tsd_weather[idx].getX(t, i_prcp) * gc.cPrep;
-    t0= tsd_weather[idx].getX(t, i_temp);
-    t_temp[i] = TemperatureOnElevation(t0, Ele[i].z_surf, tsd_weather[idx].xyz[2]) +  gc.cTemp;
+
+    const auto get_forc = [&](int col) -> double {
+        if (forcing != nullptr) {
+            return forcing->get(idx, col);
+        }
+        return tsd_weather[idx].getX(t, col);
+    };
+    const auto forc_z = [&]() -> double {
+        if (forcing != nullptr) {
+            return forcing->z(idx);
+        }
+        return tsd_weather[idx].xyz[2];
+    };
+    const auto forc_t0_min = [&]() -> double {
+        if (forcing != nullptr) {
+            return forcing->currentTimeMin(idx);
+        }
+        return tsd_weather[idx].currentTimeMin();
+    };
+    const auto forc_t1_min = [&]() -> double {
+        if (forcing != nullptr) {
+            return forcing->nextTimeMin(idx);
+        }
+        return tsd_weather[idx].nextTimeMin();
+    };
+
+    t_prcp[i] = get_forc(i_prcp) * gc.cPrep;
+    t0 = get_forc(i_temp);
+    t_temp[i] = TemperatureOnElevation(t0, Ele[i].z_surf, forc_z()) + gc.cTemp;
     t_lai[i] = tsd_LAI.getX(t, Ele[i].iLC) * gc.cLAItsd ;
     lai = t_lai[i];
     t_mf[i] = tsd_MF.getX(t, Ele[i].iMF) * gc.cMF / 1440.;  /*  [m/day/C] to [m/min/C].
                                                             1.6 ~ 6.0 mm/day/C is typical value in USDA book
                                                             Input is 1.4 ~ 3.0 mm/d/c */
     /* Shortwave radiation forcing (W/m^2) */
-    const double dswrf_h = tsd_weather[idx].getX(t, i_rn);
+    const double dswrf_h = get_forc(i_rn);
     double dswrf_t = dswrf_h;
     double factor = 1.0;
     if (CS.terrain_radiation) {
-        const double t0 = tsd_weather[idx].currentTimeMin();
-        double t1 = tsd_weather[idx].nextTimeMin();
+        const double t0 = forc_t0_min();
+        double t1 = forc_t1_min();
         if (!std::isfinite(t0)) {
             factor = 0.0;
         } else {
@@ -186,8 +212,8 @@ void Model_Data::tReadForcing(double t, int i){
         // SWDOWN mode (default): forcing 第6列是下行短波，需乘 (1-Albedo) 净化
         t_rn[i] = dswrf_t * (1 - Ele[i].Albedo);
     }
-    Uz = t_wind[i] = (fabs(tsd_weather[idx].getX(t, i_wind) ) + 0.001); // +.001 voids ZERO.
-    t_rh[i] = tsd_weather[idx].getX(t, i_rh);
+    Uz = t_wind[i] = (fabs(get_forc(i_wind)) + 0.001); // +.001 voids ZERO.
+    t_rh[i] = get_forc(i_rh);
 //    t_hc[i] = tsd_RL.getX(t, Ele[i].iLC);
 //    t_hc[i] = max(t_hc[i], CONSt_hc);
     /* Precipitation  */

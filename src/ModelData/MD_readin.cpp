@@ -361,6 +361,18 @@ void Model_Data::read_lc(const char *fn){
 //               );
     }
 }
+void Model_Data::read_forc(const char *fn)
+{
+    if (CS.forcing_mode == FORCING_CSV) {
+        read_forc_csv(fn);
+        return;
+    }
+    fprintf(stderr,
+            "\n  Fatal Error: FORCING_MODE=NETCDF is selected but NetCDF forcing provider is not implemented yet.\n");
+    fprintf(stderr, "  FORCING_CFG: %s\n", CS.forcing_cfg);
+    fprintf(stderr, "  Fix: use FORCING_MODE=CSV (baseline) or implement NetCDF forcing provider (Phase A).\n\n");
+    myexit(ERRFileIO);
+}
 void Model_Data::read_forc_csv(const char *fn){
     FILE *fp = fopen(fn, "r");
     CheckFile(fp, fn);
@@ -539,6 +551,9 @@ void Model_Data::read_forc_csv(const char *fn){
                tsd_weather[i].lon(), tsd_weather[i].lat());
         tsd_weather[i].read_csv();
     }
+
+    delete forcing;
+    forcing = new CsvForcingProvider(tsd_weather, NumForc);
 }
 void Model_Data::loadinput(){
     int nt=1;
@@ -565,7 +580,7 @@ void Model_Data::loadinput(){
     if(flag) fprintf(stdout,"%d \t Reading file: %s\n", nt++,pf_in->file_lc);
     read_lc(pf_in->file_lc);
     if(flag) fprintf(stdout,"%d \t Reading file: %s\n", nt++,pf_in->file_forc);
-    read_forc_csv(pf_in->file_forc);
+    read_forc(pf_in->file_forc);
     if(flag) fprintf(stdout,"%d \t Reading file: %s\n", nt++,pf_in->file_lai);
     read_lai(pf_in->file_lai);
 //    if(flag) fprintf(stdout,"%d \t Reading file: %s\n", nt++,pf_in->file_rl);
@@ -892,6 +907,8 @@ void Model_Data::FreeData(){
     delete[] LandC;
     
     /* free forcing data */
+    delete forcing;
+    forcing = nullptr;
     delete[] tsd_weather;
     
     /* MD::initialize() */
