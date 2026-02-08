@@ -142,6 +142,19 @@ static std::map<std::string, std::string> readKvCfg(const char *path)
     return kv;
 }
 
+static std::string readTextFileOrDie(const std::string &path, const char *what)
+{
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        fprintf(stderr, "\n  Fatal Error: Failed to open %s.\n", what ? what : "text file");
+        fprintf(stderr, "  File: %s\n", path.c_str());
+        myexit(ERRFileIO);
+    }
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
 static bool parseYYYYMMDD(long yyyymmdd, int &y, int &m, int &d)
 {
     if (yyyymmdd <= 0) {
@@ -302,12 +315,14 @@ class NetcdfElementFile {
 public:
     NetcdfElementFile(std::string out_dir_abs,
                       float fill_value,
+                      std::string crs_wkt,
                       const _Node *nodes,
                       int num_nodes,
                       const _Element *elements,
                       int num_elements)
         : out_dir_abs_(std::move(out_dir_abs)),
           fill_value_(fill_value),
+          crs_wkt_(std::move(crs_wkt)),
           nodes_(nodes),
           num_nodes_(num_nodes),
           elements_(elements),
@@ -391,6 +406,13 @@ public:
         ncCheck(nc_put_att_text(ncid_, var_node_y_, "standard_name", strlen(yname), yname),
                 "nc_put_att_text(mesh_node_y.standard_name)",
                 file_path_.c_str());
+        const char *xy_units = "m";
+        ncCheck(nc_put_att_text(ncid_, var_node_x_, "units", strlen(xy_units), xy_units),
+                "nc_put_att_text(mesh_node_x.units)",
+                file_path_.c_str());
+        ncCheck(nc_put_att_text(ncid_, var_node_y_, "units", strlen(xy_units), xy_units),
+                "nc_put_att_text(mesh_node_y.units)",
+                file_path_.c_str());
 
         const int face_node_dims[2] = {dim_face_, dim_max_face_nodes_};
         ncCheck(nc_def_var(ncid_, "mesh_face_nodes", NC_INT, 2, face_node_dims, &var_face_nodes_),
@@ -408,6 +430,34 @@ public:
         ncCheck(nc_def_var(ncid_, "mesh_face_y", NC_DOUBLE, 1, face_dims, &var_face_y_),
                 "nc_def_var(mesh_face_y)",
                 file_path_.c_str());
+        ncCheck(nc_put_att_text(ncid_, var_face_x_, "standard_name", strlen(xname), xname),
+                "nc_put_att_text(mesh_face_x.standard_name)",
+                file_path_.c_str());
+        ncCheck(nc_put_att_text(ncid_, var_face_y_, "standard_name", strlen(yname), yname),
+                "nc_put_att_text(mesh_face_y.standard_name)",
+                file_path_.c_str());
+        ncCheck(nc_put_att_text(ncid_, var_face_x_, "units", strlen(xy_units), xy_units),
+                "nc_put_att_text(mesh_face_x.units)",
+                file_path_.c_str());
+        ncCheck(nc_put_att_text(ncid_, var_face_y_, "units", strlen(xy_units), xy_units),
+                "nc_put_att_text(mesh_face_y.units)",
+                file_path_.c_str());
+
+        if (!crs_wkt_.empty()) {
+            ncCheck(nc_def_var(ncid_, "crs", NC_INT, 0, nullptr, &var_crs_),
+                    "nc_def_var(crs)",
+                    file_path_.c_str());
+            const char *crs_long_name = "coordinate reference system";
+            ncCheck(nc_put_att_text(ncid_, var_crs_, "long_name", strlen(crs_long_name), crs_long_name),
+                    "nc_put_att_text(crs.long_name)",
+                    file_path_.c_str());
+            ncCheck(nc_put_att_text(ncid_, var_crs_, "spatial_ref", crs_wkt_.size(), crs_wkt_.c_str()),
+                    "nc_put_att_text(crs.spatial_ref)",
+                    file_path_.c_str());
+            ncCheck(nc_put_att_text(ncid_, var_crs_, "crs_wkt", crs_wkt_.size(), crs_wkt_.c_str()),
+                    "nc_put_att_text(crs.crs_wkt)",
+                    file_path_.c_str());
+        }
 
         int var_mesh_ = -1;
         ncCheck(nc_def_var(ncid_, "mesh", NC_INT, 0, nullptr, &var_mesh_), "nc_def_var(mesh)", file_path_.c_str());
@@ -445,7 +495,7 @@ public:
                 "nc_def_var(element_output_mask)",
                 file_path_.c_str());
 
-        const char *conventions = "CF-1.10 UGRID-1.0";
+        const char *conventions = "CF-1.10";
         ncCheck(nc_put_att_text(ncid_, NC_GLOBAL, "Conventions", strlen(conventions), conventions),
                 "nc_put_att_text(global.Conventions)",
                 file_path_.c_str());
@@ -549,6 +599,12 @@ public:
         ncCheck(nc_put_att_text(ncid_, varid, "coordinates", strlen(coords), coords),
                 "nc_put_att_text(data.coordinates)",
                 file_path_.c_str());
+        if (var_crs_ != -1) {
+            const char *grid_mapping = "crs";
+            ncCheck(nc_put_att_text(ncid_, varid, "grid_mapping", strlen(grid_mapping), grid_mapping),
+                    "nc_put_att_text(data.grid_mapping)",
+                    file_path_.c_str());
+        }
         applyVarMetadata(ncid_, varid, name, file_path_.c_str());
         ncCheck(nc_enddef(ncid_), "nc_enddef", file_path_.c_str());
 
@@ -630,6 +686,7 @@ public:
 private:
     std::string out_dir_abs_;
     float fill_value_ = 9.96921e36f;
+    std::string crs_wkt_;
 
     std::string file_path_;
     int ncid_ = -1;
@@ -638,6 +695,7 @@ private:
     int dim_node_ = -1;
     int dim_max_face_nodes_ = -1;
     int var_time_ = -1;
+    int var_crs_ = -1;
     int var_node_x_ = -1;
     int var_node_y_ = -1;
     int var_face_nodes_ = -1;
@@ -894,7 +952,7 @@ private:
 
 class NetcdfElementVarSink final : public IPrintSink {
 public:
-    explicit NetcdfElementVarSink(NetcdfElementFile *file) : file_(file) {}
+    explicit NetcdfElementVarSink(std::shared_ptr<NetcdfElementFile> file) : file_(std::move(file)) {}
 
     void onInit(const char *legacy_basename,
                 long start_yyyymmdd,
@@ -925,7 +983,7 @@ public:
 
     void onWrite(double t_quantized_min, int num_selected, const double *buffer) override
     {
-        if (!initialized_ || file_ == nullptr || buffer == nullptr) {
+        if (!initialized_ || !file_ || buffer == nullptr) {
             return;
         }
 
@@ -948,7 +1006,7 @@ public:
     void onClose() override {}
 
 private:
-    NetcdfElementFile *file_ = nullptr;
+    std::shared_ptr<NetcdfElementFile> file_;
     bool initialized_ = false;
 
     std::string var_name_;
@@ -961,7 +1019,7 @@ private:
 
 class NetcdfSimpleVarSink final : public IPrintSink {
 public:
-    explicit NetcdfSimpleVarSink(NetcdfSimpleFile *file) : file_(file) {}
+    explicit NetcdfSimpleVarSink(std::shared_ptr<NetcdfSimpleFile> file) : file_(std::move(file)) {}
 
     void onInit(const char *legacy_basename,
                 long start_yyyymmdd,
@@ -992,7 +1050,7 @@ public:
 
     void onWrite(double t_quantized_min, int num_selected, const double *buffer) override
     {
-        if (!initialized_ || file_ == nullptr || buffer == nullptr) {
+        if (!initialized_ || !file_ || buffer == nullptr) {
             return;
         }
 
@@ -1015,7 +1073,7 @@ public:
     void onClose() override {}
 
 private:
-    NetcdfSimpleFile *file_ = nullptr;
+    std::shared_ptr<NetcdfSimpleFile> file_;
     bool initialized_ = false;
 
     std::string var_name_;
@@ -1029,6 +1087,7 @@ private:
 struct ParsedNcOutputCfg {
     std::string schema_abs;
     std::string out_dir_abs;
+    std::string crs_wkt_abs;
 };
 
 static ParsedNcOutputCfg parseNcOutputCfg(const std::string &cfg_path)
@@ -1058,6 +1117,11 @@ static ParsedNcOutputCfg parseNcOutputCfg(const std::string &cfg_path)
         cfg.out_dir_abs = isAbsPath(out_dir_cfg) ? out_dir_cfg : joinPath(run_dir, out_dir_cfg);
     }
 
+    const std::string crs_wkt_cfg = get("CRS_WKT");
+    if (!crs_wkt_cfg.empty()) {
+        cfg.crs_wkt_abs = isAbsPath(crs_wkt_cfg) ? crs_wkt_cfg : joinPath(run_dir, crs_wkt_cfg);
+    }
+
     return cfg;
 }
 
@@ -1066,42 +1130,52 @@ static ParsedNcOutputCfg parseNcOutputCfg(const std::string &cfg_path)
 struct NetcdfOutputContext::Impl {
     std::string ncoutput_cfg_path;
     ParsedNcOutputCfg cfg;
-    NetcdfElementFile ele_file;
-    NetcdfSimpleFile riv_file;
-    NetcdfSimpleFile lake_file;
-    std::vector<std::unique_ptr<IPrintSink>> sinks;
+    std::string crs_wkt;
+    std::shared_ptr<NetcdfElementFile> ele_file;
+    std::shared_ptr<NetcdfSimpleFile> riv_file;
+    std::shared_ptr<NetcdfSimpleFile> lake_file;
 
     Impl(const char *path, const _Node *nodes, int num_nodes, const _Element *elements, int num_elements)
         : ncoutput_cfg_path(path ? path : ""),
-          cfg(parseNcOutputCfg(ncoutput_cfg_path)),
-          ele_file(cfg.out_dir_abs, 9.96921e36f, nodes, num_nodes, elements, num_elements),
-          riv_file(cfg.out_dir_abs, 9.96921e36f, "river", "river_id", ".riv.nc"),
-          lake_file(cfg.out_dir_abs, 9.96921e36f, "lake", "lake_id", ".lake.nc")
+          cfg(parseNcOutputCfg(ncoutput_cfg_path))
     {
+        if (!cfg.schema_abs.empty()) {
+            fprintf(stderr,
+                    "WARNING: NCOUTPUT_CFG SCHEMA is currently ignored (not implemented): %s\n",
+                    cfg.schema_abs.c_str());
+        }
+        if (!cfg.crs_wkt_abs.empty()) {
+            crs_wkt = readTextFileOrDie(cfg.crs_wkt_abs, "CRS_WKT");
+        } else {
+            fprintf(stderr,
+                    "WARNING: NetCDF element outputs do not embed CRS information. "
+                    "Set NCOUTPUT_CFG CRS_WKT <path> to include a WKT CRS.\n");
+        }
+
+        ele_file = std::make_shared<NetcdfElementFile>(cfg.out_dir_abs,
+                                                       9.96921e36f,
+                                                       crs_wkt,
+                                                       nodes,
+                                                       num_nodes,
+                                                       elements,
+                                                       num_elements);
+        riv_file = std::make_shared<NetcdfSimpleFile>(cfg.out_dir_abs, 9.96921e36f, "river", "river_id", ".riv.nc");
+        lake_file = std::make_shared<NetcdfSimpleFile>(cfg.out_dir_abs, 9.96921e36f, "lake", "lake_id", ".lake.nc");
     }
 
-    IPrintSink *createElementSink()
+    std::shared_ptr<IPrintSink> createElementSink()
     {
-        auto s = std::make_unique<NetcdfElementVarSink>(&ele_file);
-        IPrintSink *ptr = s.get();
-        sinks.push_back(std::move(s));
-        return ptr;
+        return std::make_shared<NetcdfElementVarSink>(ele_file);
     }
 
-    IPrintSink *createRiverSink()
+    std::shared_ptr<IPrintSink> createRiverSink()
     {
-        auto s = std::make_unique<NetcdfSimpleVarSink>(&riv_file);
-        IPrintSink *ptr = s.get();
-        sinks.push_back(std::move(s));
-        return ptr;
+        return std::make_shared<NetcdfSimpleVarSink>(riv_file);
     }
 
-    IPrintSink *createLakeSink()
+    std::shared_ptr<IPrintSink> createLakeSink()
     {
-        auto s = std::make_unique<NetcdfSimpleVarSink>(&lake_file);
-        IPrintSink *ptr = s.get();
-        sinks.push_back(std::move(s));
-        return ptr;
+        return std::make_shared<NetcdfSimpleVarSink>(lake_file);
     }
 };
 
@@ -1116,17 +1190,17 @@ NetcdfOutputContext::NetcdfOutputContext(const char *ncoutput_cfg_path,
 
 NetcdfOutputContext::~NetcdfOutputContext() = default;
 
-IPrintSink *NetcdfOutputContext::createElementSink()
+std::shared_ptr<IPrintSink> NetcdfOutputContext::createElementSink()
 {
     return impl_->createElementSink();
 }
 
-IPrintSink *NetcdfOutputContext::createRiverSink()
+std::shared_ptr<IPrintSink> NetcdfOutputContext::createRiverSink()
 {
     return impl_->createRiverSink();
 }
 
-IPrintSink *NetcdfOutputContext::createLakeSink()
+std::shared_ptr<IPrintSink> NetcdfOutputContext::createLakeSink()
 {
     return impl_->createLakeSink();
 }
