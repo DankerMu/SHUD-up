@@ -1,0 +1,97 @@
+name: gh-pr-review gate
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  statuses: write
+  pull-requests: read
+  issues: read
+
+jobs:
+  pr-updated:
+    if: ${{ github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark gh-pr-review as pending
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request
+            const sha = pr.head.sha
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha,
+              state: "pending",
+              context: "gh-pr-review",
+              description: "Awaiting gh-pr-review comment marker.",
+              target_url: pr.html_url,
+            })
+
+  comment-marker:
+    if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update gh-pr-review status from comment marker
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const allowedAssociations = new Set(["OWNER", "MEMBER", "COLLABORATOR"])
+            const association = context.payload.comment.author_association
+            if (!allowedAssociations.has(association)) {
+              console.log(`Ignoring marker from author_association=${association}`)
+              return
+            }
+
+            const issueNumber = context.payload.issue.number
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: issueNumber,
+            })
+
+            const headSha = pr.head.sha.toLowerCase()
+            const commentBody = context.payload.comment.body || ""
+
+            // Marker format (single line):
+            // <!-- gh-pr-review: sha=<SHA> decision=PASS|FAIL score=<1-5> -->
+            const markerRe =
+              /<!--\s*gh-pr-review:\s*sha=([0-9a-f]{7,40})\s+decision=(PASS|FAIL)\s+score=([1-5])\s*-->/i
+            const match = commentBody.match(markerRe)
+            if (!match) {
+              console.log("No gh-pr-review marker found in comment.")
+              return
+            }
+
+            const markerSha = match[1].toLowerCase()
+            const decision = match[2].toUpperCase()
+            const score = Number.parseInt(match[3], 10)
+            const commentUrl = context.payload.comment.html_url
+
+            const shaMatches =
+              headSha === markerSha || headSha.startsWith(markerSha) || markerSha.startsWith(headSha)
+            if (!shaMatches) {
+              console.log(`Marker sha (${markerSha}) does not match PR head sha (${headSha}).`)
+              return
+            }
+
+            const pass = decision === "PASS" && score >= 4
+            const state = pass ? "success" : "failure"
+            const description = pass
+              ? `PASS (score=${score})`
+              : `FAIL (decision=${decision}, score=${score})`
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: pr.head.sha,
+              state,
+              context: "gh-pr-review",
+              description,
+              target_url: commentUrl,
+            })
