@@ -202,7 +202,7 @@ public:
     double solar_lat_deg_fixed = NA_VALUE; /* SOLAR_LAT_DEG when SOLAR_LONLAT_MODE=FIXED [deg] */
 
     /* Terrain solar radiation (TSR) correction */
-    int terrain_radiation = 0;     /* TERRAIN_RADIATION: 0/1 */
+    int terrain_radiation = 1;     /* TERRAIN_RADIATION: 0/1 */
     double rad_factor_cap = 5.0;    /* RAD_FACTOR_CAP: upper bound for TSR factor */
     double rad_cosz_min = 0.05;     /* RAD_COSZ_MIN: lower bound for cosZ in TSR denominator */
 
