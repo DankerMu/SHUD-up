@@ -1,6 +1,7 @@
 #include <iostream>
 #include <stdio.h>
 #include <stdlib.h>
+#include <cmath>
 #include <limits>
 #include "TimeSeriesData.hpp"
 
@@ -16,6 +17,7 @@ _TimeSeriesData::_TimeSeriesData(){
     timeRangeCached = 0;
     minTime = NA_VALUE;
     maxTime = NA_VALUE;
+    lastDtMin = 0.0;
 }
 
 _TimeSeriesData::~_TimeSeriesData(){
@@ -38,6 +40,7 @@ void _TimeSeriesData::initialize(int n)
     timeRangeCached = 0;
     minTime = NA_VALUE;
     maxTime = NA_VALUE;
+    lastDtMin = 0.0;
     for (int i = 0; i < MAXQUE + 1; i++) {
         pRing[i] = i + 1;
     }
@@ -79,6 +82,7 @@ void _TimeSeriesData::computeTimeRange() const
 
     double localMin = std::numeric_limits<double>::infinity();
     double localMax = -std::numeric_limits<double>::infinity();
+    double lastPositiveDtMin = 0.0;
 
     while (std::getline(file, line)) {
         lineNo++;
@@ -118,6 +122,11 @@ void _TimeSeriesData::computeTimeRange() const
             myexit(ERRDATAIN);
         }
 
+        const double dtMin = timeMin - prevTimeMin;
+        if (dtMin > 1e-12) {
+            lastPositiveDtMin = dtMin;
+        }
+
         if (timeMin < localMin) localMin = timeMin;
         if (timeMin > localMax) localMax = timeMin;
         prevTimeMin = timeMin;
@@ -133,6 +142,7 @@ void _TimeSeriesData::computeTimeRange() const
 
     minTime = localMin;
     maxTime = localMax;
+    lastDtMin = lastPositiveDtMin;
     timeRangeCached = 1;
 }
 
@@ -146,6 +156,18 @@ double _TimeSeriesData::getMaxTime() const
 {
     computeTimeRange();
     return maxTime;
+}
+
+double _TimeSeriesData::getMaxTimeCovered() const
+{
+    computeTimeRange();
+    if (!std::isfinite(maxTime)) {
+        return maxTime;
+    }
+    if (!(lastDtMin > 0.0) || !std::isfinite(lastDtMin)) {
+        return maxTime;
+    }
+    return maxTime + lastDtMin;
 }
 
 void _TimeSeriesData::read_csv()
