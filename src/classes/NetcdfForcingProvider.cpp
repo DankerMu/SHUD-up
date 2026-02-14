@@ -778,7 +778,14 @@ struct NetcdfForcingProvider::Impl {
         const long long base_days = daysFromCivil(base_y, base_m, base_d);
 
         const long long start_days = base_days + (long long)std::floor(sim_start_min / 1440.0);
-        const long long end_days = base_days + (long long)std::floor(sim_end_min / 1440.0);
+        // Simulation END is an exclusive bound for forcing file discovery: the model never
+        // queries forcing at t == sim_end_min, only for times in [sim_start_min, sim_end_min).
+        // Avoid requesting the month of the END boundary when it lands exactly on a month/day boundary.
+        double end_min_excl = sim_end_min;
+        if (sim_end_min > sim_start_min + 1e-12) {
+            end_min_excl = std::nextafter(sim_end_min, -std::numeric_limits<double>::infinity());
+        }
+        const long long end_days = base_days + (long long)std::floor(end_min_excl / 1440.0);
         int y0 = 0, y1 = 0;
         unsigned m0 = 0, m1 = 0;
         unsigned dtmp = 0;
@@ -1253,15 +1260,22 @@ struct NetcdfForcingProvider::Impl {
             if (!std::isfinite(prec_mm_day)) {
                 prec_mm_day = 0.0;
             }
+            if (prec_mm_day < 0.0) {
+                prec_mm_day = 0.0;
+            }
+            // Match AutoSHUD baseline forcing CSV quantization (4 decimals) before thresholding.
+            prec_mm_day = std::nearbyint(prec_mm_day * 10000.0) / 10000.0;
             const double min_mm_day = 0.0001; // match AutoSHUD behavior
             if (prec_mm_day < min_mm_day) {
                 prec_mm_day = 0.0;
             }
-            if (prec_mm_day < 0.0) {
-                prec_mm_day = 0.0;
-            }
 
-            const double temp_c_val = temp_k - 273.15;
+            double temp_c_val = temp_k - 273.15;
+            if (!std::isfinite(temp_c_val)) {
+                temp_c_val = 0.0;
+            }
+            // Match AutoSHUD baseline forcing CSV quantization (2 decimals).
+            temp_c_val = std::nearbyint(temp_c_val * 100.0) / 100.0;
 
             double rh_percent = 0.263 * pres * shum /
                                 std::exp(17.67 * (temp_k - 273.15) / (temp_k - 29.65));
@@ -1274,13 +1288,42 @@ struct NetcdfForcingProvider::Impl {
             if (rh_percent < 0.0) {
                 rh_percent = 0.0;
             }
-            const double rh_val = rh_percent / 100.0;
+            double rh_val = rh_percent / 100.0;
+            // Match AutoSHUD baseline forcing CSV quantization (4 decimals).
+            rh_val = std::nearbyint(rh_val * 10000.0) / 10000.0;
+            if (rh_val > 1.0) {
+                rh_val = 1.0;
+            }
+            if (rh_val < 0.0) {
+                rh_val = 0.0;
+            }
+
+            double wind_val = std::fabs(wind);
+            if (!std::isfinite(wind_val)) {
+                wind_val = 0.0;
+            }
+            // Match AutoSHUD baseline forcing CSV quantization (2 decimals) + min clamp.
+            wind_val = std::nearbyint(wind_val * 100.0) / 100.0;
+            const double min_wind_ms = 0.05;
+            if (wind_val < min_wind_ms) {
+                wind_val = min_wind_ms;
+            }
+
+            double rn_val = srad;
+            if (!std::isfinite(rn_val)) {
+                rn_val = 0.0;
+            }
+            if (rn_val < 0.0) {
+                rn_val = 0.0;
+            }
+            // Match AutoSHUD baseline forcing CSV quantization (integer).
+            rn_val = std::nearbyint(rn_val);
 
             prcp_mm_day[i] = prec_mm_day;
             temp_c[i] = temp_c_val;
             rh_1[i] = rh_val;
-            wind_ms[i] = std::fabs(wind);
-            rn_wm2[i] = srad;
+            wind_ms[i] = wind_val;
+            rn_wm2[i] = rn_val;
         }
         loaded_time_idx = t_idx;
     }
@@ -1716,7 +1759,24 @@ struct NetcdfForcingProvider::Impl {
     }
 
     double minTimeMin() const { return time_min.empty() ? NA_VALUE : time_min.front(); }
-    double maxTimeMin() const { return time_min.empty() ? NA_VALUE : time_min.back(); }
+    double maxTimeMin() const
+    {
+        if (time_min.empty()) {
+            return NA_VALUE;
+        }
+        const double t_max = time_min.back();
+        // Step-function forcing: the last record covers one more interval beyond its timestamp.
+        // Estimate that final interval width from the last positive dt in the time axis.
+        double dt_last = 0.0;
+        for (size_t i = time_min.size(); i > 1; i--) {
+            const double dt = time_min[i - 1] - time_min[i - 2];
+            if (dt > 1e-9) {
+                dt_last = dt;
+                break;
+            }
+        }
+        return t_max + dt_last;
+    }
 };
 
 NetcdfForcingProvider::NetcdfForcingProvider(const char *forcing_cfg_path,

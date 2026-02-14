@@ -846,7 +846,7 @@ void Model_Data::validateTimeStamps()
     } else {
         for (int i = 0; i < NumForc; i++) {
             const double forcMin = tsd_weather[i].getMinTime();
-            const double forcMax = tsd_weather[i].getMaxTime();
+            const double forcMax = tsd_weather[i].getMaxTimeCovered();
 
             const bool startCovered = (forcMin - simStart) <= 1e-6;
             const bool endCovered = (simEnd - forcMax) <= 1e-6;

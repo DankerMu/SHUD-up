@@ -33,6 +33,7 @@ public:
     long    getStartTime() const;
     double  getMinTime() const;
     double  getMaxTime() const;
+    double  getMaxTimeCovered() const;
     double  xyz[3]={NA_VALUE, NA_VALUE, NA_VALUE};
     double  lon_deg = NA_VALUE;
     double  lat_deg = NA_VALUE;
@@ -44,6 +45,7 @@ private:
     mutable int timeRangeCached = 0;
     mutable double minTime = NA_VALUE;
     mutable double maxTime = NA_VALUE;
+    mutable double lastDtMin = 0.0;
     int ncol = 0;
     int Length;
     int eof;
