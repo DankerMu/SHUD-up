@@ -508,6 +508,195 @@ static double readPoint(const NcVarPointReader &r,
     return v;
 }
 
+// Lightweight reader for variables sharing the same open NetCDF file handle.
+// This avoids re-opening the same file for each variable (used by GLDAS per-timestep layout).
+struct NcVarPointMeta {
+    std::string file;
+    std::string var_name;
+    int varid = -1;
+    int ndims = 0;
+    int time_dim_pos = -1;
+    int lat_dim_pos = -1;
+    int lon_dim_pos = -1;
+
+    bool has_scale = false;
+    bool has_offset = false;
+    double scale = 1.0;
+    double offset = 0.0;
+
+    bool has_fill = false;
+    bool has_missing = false;
+    double fill = 0.0;
+    double missing = 0.0;
+};
+
+static NcVarPointMeta openPointMeta(int ncid,
+                                   const std::string &file,
+                                   const std::string &var_name,
+                                   const std::string &dim_time,
+                                   const std::string &dim_lat,
+                                   const std::string &dim_lon)
+{
+    NcVarPointMeta r;
+    r.file = file;
+    r.var_name = var_name;
+
+    int varid = -1;
+    int rc = nc_inq_varid(ncid, var_name.c_str(), &varid);
+    if (rc != NC_NOERR) {
+        fprintf(stderr, "\n  Fatal Error: NetCDF variable not found.\n");
+        fprintf(stderr, "  File: %s\n", file.c_str());
+        fprintf(stderr, "  Var: %s\n", var_name.c_str());
+        fprintf(stderr, "  Error: %s\n", ncStrError(rc).c_str());
+        myexit(ERRFileIO);
+    }
+    r.varid = varid;
+
+    char name_buf[NC_MAX_NAME + 1];
+    nc_type xtype;
+    int ndims = 0;
+    int dimids[NC_MAX_VAR_DIMS];
+    int natts = 0;
+    rc = nc_inq_var(ncid, varid, name_buf, &xtype, &ndims, dimids, &natts);
+    if (rc != NC_NOERR) {
+        fprintf(stderr, "\n  Fatal Error: nc_inq_var failed.\n");
+        fprintf(stderr, "  File: %s\n", file.c_str());
+        fprintf(stderr, "  Var: %s\n", var_name.c_str());
+        fprintf(stderr, "  Error: %s\n", ncStrError(rc).c_str());
+        myexit(ERRFileIO);
+    }
+    r.ndims = ndims;
+    if (ndims != 3) {
+        fprintf(stderr, "\n  Fatal Error: NetCDF forcing variable must be 3-D (time/lat/lon).\n");
+        fprintf(stderr, "  File: %s\n", file.c_str());
+        fprintf(stderr, "  Var: %s\n", var_name.c_str());
+        fprintf(stderr, "  ndims: %d\n", ndims);
+        myexit(ERRFileIO);
+    }
+
+    for (int i = 0; i < ndims; i++) {
+        char dimname[NC_MAX_NAME + 1];
+        rc = nc_inq_dimname(ncid, dimids[i], dimname);
+        if (rc != NC_NOERR) {
+            fprintf(stderr, "\n  Fatal Error: nc_inq_dimname failed.\n");
+            fprintf(stderr, "  File: %s\n", file.c_str());
+            fprintf(stderr, "  Var: %s\n", var_name.c_str());
+            fprintf(stderr, "  Error: %s\n", ncStrError(rc).c_str());
+            myexit(ERRFileIO);
+        }
+        const std::string dn(dimname);
+        if (dn == dim_time) {
+            r.time_dim_pos = i;
+        } else if (dn == dim_lat) {
+            r.lat_dim_pos = i;
+        } else if (dn == dim_lon) {
+            r.lon_dim_pos = i;
+        }
+    }
+    if (r.time_dim_pos < 0 || r.lat_dim_pos < 0 || r.lon_dim_pos < 0) {
+        fprintf(stderr, "\n  Fatal Error: NetCDF forcing variable dims must include time/lat/lon by name.\n");
+        fprintf(stderr, "  File: %s\n", file.c_str());
+        fprintf(stderr, "  Var: %s\n", var_name.c_str());
+        fprintf(stderr, "  Expect dims: time='%s', lat='%s', lon='%s'\n",
+                dim_time.c_str(), dim_lat.c_str(), dim_lon.c_str());
+        fprintf(stderr, "  Got dim positions: time=%d lat=%d lon=%d\n",
+                r.time_dim_pos, r.lat_dim_pos, r.lon_dim_pos);
+        myexit(ERRFileIO);
+    }
+
+    double scale = 1.0;
+    if (ncGetAttDouble(ncid, varid, "scale_factor", scale)) {
+        r.has_scale = true;
+        r.scale = scale;
+    }
+    double offset = 0.0;
+    if (ncGetAttDouble(ncid, varid, "add_offset", offset)) {
+        r.has_offset = true;
+        r.offset = offset;
+    }
+    double fill = 0.0;
+    if (ncGetAttDouble(ncid, varid, "_FillValue", fill)) {
+        r.has_fill = true;
+        r.fill = fill;
+    }
+    double missing = 0.0;
+    if (ncGetAttDouble(ncid, varid, "missing_value", missing)) {
+        r.has_missing = true;
+        r.missing = missing;
+    }
+
+    return r;
+}
+
+static double readPointFromOpenFile(int ncid,
+                                    const NcVarPointMeta &r,
+                                    size_t time_idx,
+                                    size_t lat_idx,
+                                    size_t lon_idx,
+                                    int station_idx,
+                                    double station_lon,
+                                    double station_lat,
+                                    double grid_lon,
+                                    double grid_lat)
+{
+    std::vector<size_t> start((size_t)r.ndims, 0);
+    std::vector<size_t> count((size_t)r.ndims, 1);
+    start[(size_t)r.time_dim_pos] = time_idx;
+    start[(size_t)r.lat_dim_pos] = lat_idx;
+    start[(size_t)r.lon_dim_pos] = lon_idx;
+
+    double raw = std::numeric_limits<double>::quiet_NaN();
+    const int rc = nc_get_vara_double(ncid, r.varid, start.data(), count.data(), &raw);
+    if (rc != NC_NOERR) {
+        fprintf(stderr, "\n  Fatal Error: Failed to read NetCDF forcing value.\n");
+        fprintf(stderr, "  File: %s\n", r.file.c_str());
+        fprintf(stderr, "  Var: %s\n", r.var_name.c_str());
+        fprintf(stderr, "  Index: time=%zu lat=%zu lon=%zu\n", time_idx, lat_idx, lon_idx);
+        fprintf(stderr, "  Station[%d]: lon=%.6f lat=%.6f (grid_lon=%.6f grid_lat=%.6f)\n",
+                station_idx, station_lon, station_lat, grid_lon, grid_lat);
+        fprintf(stderr, "  Error: %s\n", ncStrError(rc).c_str());
+        myexit(ERRFileIO);
+    }
+
+    if (!std::isfinite(raw)) {
+        fprintf(stderr, "\n  Fatal Error: NetCDF forcing value is not finite.\n");
+        fprintf(stderr, "  File: %s\n", r.file.c_str());
+        fprintf(stderr, "  Var: %s\n", r.var_name.c_str());
+        fprintf(stderr, "  Index: time=%zu lat=%zu lon=%zu\n", time_idx, lat_idx, lon_idx);
+        fprintf(stderr, "  Station[%d]: lon=%.6f lat=%.6f (grid_lon=%.6f grid_lat=%.6f)\n",
+                station_idx, station_lon, station_lat, grid_lon, grid_lat);
+        myexit(ERRDATAIN);
+    }
+
+    if (r.has_fill && raw == r.fill) {
+        fprintf(stderr, "\n  Fatal Error: NetCDF forcing value is _FillValue.\n");
+        fprintf(stderr, "  File: %s\n", r.file.c_str());
+        fprintf(stderr, "  Var: %s\n", r.var_name.c_str());
+        fprintf(stderr, "  Index: time=%zu lat=%zu lon=%zu\n", time_idx, lat_idx, lon_idx);
+        fprintf(stderr, "  Station[%d]: lon=%.6f lat=%.6f (grid_lon=%.6f grid_lat=%.6f)\n",
+                station_idx, station_lon, station_lat, grid_lon, grid_lat);
+        myexit(ERRDATAIN);
+    }
+    if (r.has_missing && raw == r.missing) {
+        fprintf(stderr, "\n  Fatal Error: NetCDF forcing value is missing_value.\n");
+        fprintf(stderr, "  File: %s\n", r.file.c_str());
+        fprintf(stderr, "  Var: %s\n", r.var_name.c_str());
+        fprintf(stderr, "  Index: time=%zu lat=%zu lon=%zu\n", time_idx, lat_idx, lon_idx);
+        fprintf(stderr, "  Station[%d]: lon=%.6f lat=%.6f (grid_lon=%.6f grid_lat=%.6f)\n",
+                station_idx, station_lon, station_lat, grid_lon, grid_lat);
+        myexit(ERRDATAIN);
+    }
+
+    double v = raw;
+    if (r.has_scale) {
+        v *= r.scale;
+    }
+    if (r.has_offset) {
+        v += r.offset;
+    }
+    return v;
+}
+
 static std::map<std::string, std::string> readKvCfg(const char *path)
 {
     std::ifstream f(path);
@@ -587,7 +776,7 @@ struct NetcdfForcingProvider::Impl {
 
     // Global time axis (minutes since forc_start_yyyymmdd)
     struct TimeMapItem {
-        int file_idx = -1;         // CMFD2: month index; ERA5: day index
+        int file_idx = -1;         // CMFD2: month index; ERA5: day index; GLDAS: timestep-file index
         size_t local_time_idx = 0; // time index within that file
     };
     std::vector<double> time_min;
@@ -622,6 +811,15 @@ struct NetcdfForcingProvider::Impl {
     };
     std::vector<Era5DayFile> era5_days;
 
+    // GLDAS file set per time step (single NetCDF per 3-hour step)
+    struct GldasStepFile {
+        long long t_min = 0; // minutes since forc_start_yyyymmdd (nominal)
+        std::string yyyymmdd;
+        std::string hhmm;
+        std::string file;
+    };
+    std::vector<GldasStepFile> gldas_steps;
+
     int open_month_idx = -1;
     NcVarPointReader r_prec;
     NcVarPointReader r_temp;
@@ -634,6 +832,7 @@ struct NetcdfForcingProvider::Impl {
     {
         closeMonthReaders();
         closeEra5Readers();
+        closeGldasReaders();
     }
 
     void closeMonthReaders()
@@ -667,6 +866,25 @@ struct NetcdfForcingProvider::Impl {
         r_ssr.close();
         r_sp.close();
         open_day_idx = -1;
+    }
+
+    // GLDAS readers (single file per time step; open once and reuse var metadata)
+    int open_gldas_idx = -1;
+    int gldas_ncid = -1;
+    NcVarPointMeta g_prec;
+    NcVarPointMeta g_temp;
+    NcVarPointMeta g_shum;
+    NcVarPointMeta g_srad;
+    NcVarPointMeta g_wind;
+    NcVarPointMeta g_pres;
+
+    void closeGldasReaders()
+    {
+        if (gldas_ncid >= 0) {
+            nc_close(gldas_ncid);
+            gldas_ncid = -1;
+        }
+        open_gldas_idx = -1;
     }
 
     void parseCfg()
@@ -751,6 +969,8 @@ struct NetcdfForcingProvider::Impl {
                 layout_file_pattern = get("CMFD_FILE_PATTERN", "");
             } else if (product == "ERA5") {
                 layout_file_pattern = get("ERA5_FILE_PATTERN", "");
+            } else if (product == "GLDAS") {
+                layout_file_pattern = get("GLDAS_FILE_PATTERN", "");
             }
         }
     }
@@ -1338,6 +1558,16 @@ struct NetcdfForcingProvider::Impl {
         }
     }
 
+    void requireGldasKey(const char *k, const std::string &v) const
+    {
+        if (v.empty()) {
+            fprintf(stderr, "\n  Fatal Error: Missing required GLDAS forcing cfg key.\n");
+            fprintf(stderr, "  File: %s\n", cfg_path.c_str());
+            fprintf(stderr, "  Key: %s\n", k);
+            myexit(ERRFileIO);
+        }
+    }
+
     void initEra5Days()
     {
         int base_y = 0;
@@ -1349,7 +1579,17 @@ struct NetcdfForcingProvider::Impl {
         }
         const long long base_days = daysFromCivil(base_y, base_m, base_d);
         const long long start_days = base_days + (long long)std::floor(sim_start_min / 1440.0);
-        const long long end_days = base_days + (long long)std::floor(sim_end_min / 1440.0);
+        // ERA5 uses accumulated fields (tp/ssr) which are converted to interval increments
+        // using a forward difference. This requires forcing availability at the first
+        // time step boundary >= sim_end_min (even though sim_end_min itself is an exclusive
+        // simulation bound).
+        double end_min_needed = sim_end_min;
+        if (sim_end_min > sim_start_min + 1e-12) {
+            const double dt_min = 60.0; // ERA5 hourly
+            const double eps = 1e-9;
+            end_min_needed = std::ceil((sim_end_min - eps) / dt_min) * dt_min;
+        }
+        const long long end_days = base_days + (long long)std::floor(end_min_needed / 1440.0);
 
         requireEra5Key("LAYOUT_FILE_PATTERN", layout_file_pattern);
 
@@ -1423,10 +1663,100 @@ struct NetcdfForcingProvider::Impl {
         requireEra5Key("NC_VAR_SSR", nc_var["SSR"]);
     }
 
-    void discoverGridAndStationsEra5()
+    void initGldasTimesteps()
     {
-        if (era5_days.empty()) {
-            fprintf(stderr, "\n  Fatal Error: ERA5 day file list is empty.\n");
+        int base_y = 0;
+        unsigned base_m = 0;
+        unsigned base_d = 0;
+        if (!parseYYYYMMDD(forc_start_yyyymmdd, base_y, base_m, base_d)) {
+            fprintf(stderr, "\n  Fatal Error: Invalid ForcStartTime for NetCDF forcing: %ld\n", forc_start_yyyymmdd);
+            myexit(ERRDATAIN);
+        }
+        const long long base_days = daysFromCivil(base_y, base_m, base_d);
+
+        // Determine required timesteps from simulation interval.
+        // GLDAS_NOAH025_3H is 3-hourly.
+        const double dt_min = 180.0;
+        const long long start_step = (long long)std::floor(sim_start_min / dt_min);
+        // Include the END boundary step when it lands exactly on a 3-hour boundary.
+        // This improves forcing interval reporting (nextTimeMin) without changing simulation values
+        // (the model does not query forcing at t == sim_end_min).
+        const long long end_step_raw = (long long)std::floor(sim_end_min / dt_min);
+        const long long end_step = (end_step_raw >= start_step) ? end_step_raw : start_step;
+
+        requireGldasKey("LAYOUT_FILE_PATTERN", layout_file_pattern);
+
+        gldas_steps.clear();
+        gldas_steps.reserve((size_t)std::max<long long>(0LL, end_step - start_step + 1));
+
+        auto resolveStepFile = [&](long long t_min_ll,
+                                  const std::string &yyyymmdd,
+                                  const std::string &hhmm,
+                                  const std::string &yyyy,
+                                  const std::string &doy) -> std::string {
+            std::string pat = layout_file_pattern;
+            replaceAll(pat, "{year}", yyyy);
+            replaceAll(pat, "{yyyy}", yyyy);
+            replaceAll(pat, "{doy}", doy);
+            replaceAll(pat, "{yyyymmdd}", yyyymmdd);
+            replaceAll(pat, "{hhmm}", hhmm);
+            const std::string f = joinPath(data_root_abs, pat);
+
+            const bool has_glob = (f.find_first_of("*?[") != std::string::npos);
+            if (has_glob) {
+                return resolveSingleGlob(f);
+            }
+            std::ifstream test(f);
+            if (!test.good()) {
+                fprintf(stderr, "\n  Fatal Error: GLDAS NetCDF file not found.\n");
+                fprintf(stderr, "  File: %s\n", f.c_str());
+                fprintf(stderr, "  yyyymmdd=%s hhmm=%s t_min=%lld\n", yyyymmdd.c_str(), hhmm.c_str(), t_min_ll);
+                fprintf(stderr, "  DATA_ROOT=%s\n", data_root_abs.c_str());
+                fprintf(stderr, "  LAYOUT_FILE_PATTERN=%s\n", layout_file_pattern.c_str());
+                myexit(ERRFileIO);
+            }
+            return f;
+        };
+
+        for (long long s = start_step; s <= end_step; s++) {
+            const long long t_min_ll = s * 180LL;
+            const long long day_off = t_min_ll / 1440LL;
+            const long long min_in_day = t_min_ll - day_off * 1440LL;
+            int y = 0;
+            unsigned m = 0;
+            unsigned d = 0;
+            civilFromDays(base_days + day_off, y, m, d);
+
+            const std::string yyyy = zfillInt(y, 4);
+            const std::string yyyymmdd = yyyy + zfillInt((int)m, 2) + zfillInt((int)d, 2);
+            const int hh = (int)(min_in_day / 60LL);
+            const int mm = (int)(min_in_day % 60LL);
+            const std::string hhmm = zfillInt(hh, 2) + zfillInt(mm, 2);
+
+            const int doy_i = (int)(daysFromCivil(y, m, d) - daysFromCivil(y, 1, 1) + 1);
+            const std::string doy = zfillInt(doy_i, 3);
+
+            GldasStepFile gf;
+            gf.t_min = t_min_ll;
+            gf.yyyymmdd = yyyymmdd;
+            gf.hhmm = hhmm;
+            gf.file = resolveStepFile(t_min_ll, yyyymmdd, hhmm, yyyy, doy);
+            gldas_steps.push_back(gf);
+        }
+
+        // Ensure required variable mappings exist.
+        requireGldasKey("NC_VAR_PREC", nc_var["PREC"]);
+        requireGldasKey("NC_VAR_TEMP", nc_var["TEMP"]);
+        requireGldasKey("NC_VAR_SHUM", nc_var["SHUM"]);
+        requireGldasKey("NC_VAR_PRES", nc_var["PRES"]);
+        requireGldasKey("NC_VAR_WIND", nc_var["WIND"]);
+        requireGldasKey("NC_VAR_SRAD", nc_var["SRAD"]);
+    }
+
+	    void discoverGridAndStationsEra5()
+	    {
+	        if (era5_days.empty()) {
+	            fprintf(stderr, "\n  Fatal Error: ERA5 day file list is empty.\n");
             myexit(ERRFileIO);
         }
         const std::string &grid_file = era5_days[0].file;
@@ -1494,22 +1824,195 @@ struct NetcdfForcingProvider::Impl {
         const size_t nlog = std::min<size_t>(stations.size(), 3);
         fprintf(stdout, "\tNetCDF forcing: PRODUCT=%s, stations=%zu, grid=(lat=%zu, lon=%zu)\n",
                 product.c_str(), stations.size(), grid_lat.size(), grid_lon.size());
-        for (size_t i = 0; i < nlog; i++) {
-            fprintf(stdout,
-                    "\tNetCDF forcing map[%zu]: station(lon=%.6f, lat=%.6f) -> grid(idx_lat=%zu idx_lon=%zu; lon=%.6f lat=%.6f)\n",
-                    i,
-                    stations[i].lon_deg,
-                    stations[i].lat_deg,
-                    station_lat_idx[i],
-                    station_lon_idx[i],
-                    station_grid_lon[i],
-                    station_grid_lat[i]);
-        }
-    }
+	        for (size_t i = 0; i < nlog; i++) {
+	            fprintf(stdout,
+	                    "\tNetCDF forcing map[%zu]: station(lon=%.6f, lat=%.6f) -> grid(idx_lat=%zu idx_lon=%zu; lon=%.6f lat=%.6f)\n",
+	                    i,
+	                    stations[i].lon_deg,
+	                    stations[i].lat_deg,
+	                    station_lat_idx[i],
+	                    station_lon_idx[i],
+	                    station_grid_lon[i],
+	                    station_grid_lat[i]);
+	        }
+	    }
 
-    void buildGlobalTimeAxisEra5()
-    {
-        time_min.clear();
+	    void discoverGridAndStationsGldas()
+	    {
+	        if (gldas_steps.empty()) {
+	            fprintf(stderr, "\n  Fatal Error: GLDAS timestep file list is empty.\n");
+	            myexit(ERRFileIO);
+	        }
+	        const std::string &grid_file = gldas_steps[0].file;
+	        grid_lat = readCoord1d(grid_file, lat_var);
+	        grid_lon = readCoord1d(grid_file, lon_var);
+	        if (grid_lat.empty() || grid_lon.empty()) {
+	            fprintf(stderr, "\n  Fatal Error: Failed to read GLDAS grid coordinate arrays.\n");
+	            fprintf(stderr, "  File: %s\n", grid_file.c_str());
+	            fprintf(stderr, "  LAT_VAR=%s (n=%zu)\n", lat_var.c_str(), grid_lat.size());
+	            fprintf(stderr, "  LON_VAR=%s (n=%zu)\n", lon_var.c_str(), grid_lon.size());
+	            myexit(ERRFileIO);
+	        }
+
+	        double lon_min = grid_lon[0];
+	        double lon_max = grid_lon[0];
+	        for (double v : grid_lon) {
+	            lon_min = std::min(lon_min, v);
+	            lon_max = std::max(lon_max, v);
+	        }
+	        grid_lon_is_0360 = (lon_min >= 0.0 && lon_max > 180.0);
+
+	        const size_t nst = stations.size();
+	        station_lat_idx.assign(nst, 0);
+	        station_lon_idx.assign(nst, 0);
+	        station_grid_lat.assign(nst, NA_VALUE);
+	        station_grid_lon.assign(nst, NA_VALUE);
+
+	        // GLDAS can contain _FillValue over water bodies (e.g., lakes).
+	        // Remap stations to the nearest valid grid cell in the first forcing file.
+	        openGldasStep(0);
+	        auto is_valid = [&](size_t ilat, size_t ilon) -> bool {
+	            std::vector<size_t> start((size_t)g_temp.ndims, 0);
+	            std::vector<size_t> count((size_t)g_temp.ndims, 1);
+	            start[(size_t)g_temp.time_dim_pos] = 0;
+	            start[(size_t)g_temp.lat_dim_pos] = ilat;
+	            start[(size_t)g_temp.lon_dim_pos] = ilon;
+
+	            double raw = std::numeric_limits<double>::quiet_NaN();
+	            const int rc = nc_get_vara_double(gldas_ncid, g_temp.varid, start.data(), count.data(), &raw);
+	            if (rc != NC_NOERR) {
+	                return false;
+	            }
+	            if (!std::isfinite(raw)) {
+	                return false;
+	            }
+	            if (g_temp.has_fill && raw == g_temp.fill) {
+	                return false;
+	            }
+	            if (g_temp.has_missing && raw == g_temp.missing) {
+	                return false;
+	            }
+	            return true;
+	        };
+
+	        size_t remapped = 0;
+	        for (size_t i = 0; i < nst; i++) {
+	            double slon = stations[i].lon_deg;
+	            double slat = stations[i].lat_deg;
+	            if (grid_lon_is_0360) {
+	                if (slon < 0.0) {
+	                    slon += 360.0;
+	                }
+	                while (slon >= 360.0) {
+	                    slon -= 360.0;
+	                }
+	            }
+
+	            size_t best_j = 0;
+	            double best_d = std::numeric_limits<double>::infinity();
+	            for (size_t j = 0; j < grid_lon.size(); j++) {
+	                const double d = std::fabs(grid_lon[j] - slon);
+	                if (d < best_d) {
+	                    best_d = d;
+	                    best_j = j;
+	                }
+	            }
+
+	            size_t best_k = 0;
+	            double best_dlat = std::numeric_limits<double>::infinity();
+	            for (size_t k = 0; k < grid_lat.size(); k++) {
+	                const double d = std::fabs(grid_lat[k] - slat);
+	                if (d < best_dlat) {
+	                    best_dlat = d;
+	                    best_k = k;
+	                }
+	            }
+
+	            if (!is_valid(best_k, best_j)) {
+	                const int max_r = 10; // up to ~2.5 degrees in each direction
+	                double best_dist2 = std::numeric_limits<double>::infinity();
+	                size_t best_j2 = best_j;
+	                size_t best_k2 = best_k;
+	                bool found = false;
+	                for (int r = 1; r <= max_r; r++) {
+	                    const int k0 = (int)best_k;
+	                    const int j0 = (int)best_j;
+	                    const int k_lo = std::max(0, k0 - r);
+	                    const int k_hi = std::min((int)grid_lat.size() - 1, k0 + r);
+	                    const int j_lo = std::max(0, j0 - r);
+	                    const int j_hi = std::min((int)grid_lon.size() - 1, j0 + r);
+	                    for (int kk = k_lo; kk <= k_hi; kk++) {
+	                        for (int jj = j_lo; jj <= j_hi; jj++) {
+	                            const size_t k_c = (size_t)kk;
+	                            const size_t j_c = (size_t)jj;
+	                            if (!is_valid(k_c, j_c)) {
+	                                continue;
+	                            }
+	                            double dlon = std::fabs(grid_lon[j_c] - slon);
+	                            if (grid_lon_is_0360) {
+	                                dlon = std::min(dlon, 360.0 - dlon);
+	                            }
+	                            const double dlat = std::fabs(grid_lat[k_c] - slat);
+	                            const double dist2 = dlon * dlon + dlat * dlat;
+	                            if (dist2 < best_dist2) {
+	                                best_dist2 = dist2;
+	                                best_j2 = j_c;
+	                                best_k2 = k_c;
+	                                found = true;
+	                            }
+	                        }
+	                    }
+	                    if (found) {
+	                        break;
+	                    }
+	                }
+
+	                if (found) {
+	                    best_j = best_j2;
+	                    best_k = best_k2;
+	                    remapped++;
+	                } else {
+	                    fprintf(stderr, "\n  Fatal Error: GLDAS forcing grid cell is missing for a forcing station.\n");
+	                    fprintf(stderr, "  Station[%zu]: lon=%.6f lat=%.6f\n", i, stations[i].lon_deg, stations[i].lat_deg);
+	                    fprintf(stderr, "  Nearest grid cell: idx_lat=%zu idx_lon=%zu (lon=%.6f lat=%.6f)\n",
+	                            best_k, best_j, grid_lon[best_j], grid_lat[best_k]);
+	                    fprintf(stderr, "  File: %s\n", grid_file.c_str());
+	                    fprintf(stderr, "  Fix suggestions:\n");
+	                    fprintf(stderr, "    - Use a forcing product with full coverage over lakes.\n");
+	                    fprintf(stderr, "    - Or adjust forcing station placement away from water-mask cells.\n");
+	                    myexit(ERRDATAIN);
+	                }
+	            }
+
+	            station_lon_idx[i] = best_j;
+	            station_lat_idx[i] = best_k;
+	            station_grid_lon[i] = grid_lon[best_j];
+	            station_grid_lat[i] = grid_lat[best_k];
+	        }
+	        if (remapped > 0) {
+	            fprintf(stdout, "\tGLDAS remap: %zu/%zu stations moved off _FillValue grid cells (using t0 file).\n",
+	                    remapped, nst);
+	        }
+
+	        const size_t nlog = std::min<size_t>(stations.size(), 3);
+	        fprintf(stdout, "\tNetCDF forcing: PRODUCT=%s, stations=%zu, grid=(lat=%zu, lon=%zu)\n",
+	                product.c_str(), stations.size(), grid_lat.size(), grid_lon.size());
+	        for (size_t i = 0; i < nlog; i++) {
+	            fprintf(stdout,
+	                    "\tNetCDF forcing map[%zu]: station(lon=%.6f, lat=%.6f) -> grid(idx_lat=%zu idx_lon=%zu; lon=%.6f lat=%.6f)\n",
+	                    i,
+	                    stations[i].lon_deg,
+	                    stations[i].lat_deg,
+	                    station_lat_idx[i],
+	                    station_lon_idx[i],
+	                    station_grid_lon[i],
+	                    station_grid_lat[i]);
+	        }
+	    }
+
+	    void buildGlobalTimeAxisEra5()
+	    {
+	        time_min.clear();
         time_map.clear();
         for (size_t di = 0; di < era5_days.size(); di++) {
             const std::vector<double> t = readTimeAxisMin(era5_days[di].file);
@@ -1532,14 +2035,41 @@ struct NetcdfForcingProvider::Impl {
             fprintf(stderr, "\n  Fatal Error: ERA5 time axis is empty.\n");
             myexit(ERRFileIO);
         }
-        fprintf(stdout, "\tNetCDF forcing time coverage: [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
-                time_min.front(), time_min.back(), time_min.front() / 1440.0, time_min.back() / 1440.0);
-    }
+	        fprintf(stdout, "\tNetCDF forcing time coverage: [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
+	                time_min.front(), time_min.back(), time_min.front() / 1440.0, time_min.back() / 1440.0);
+	    }
 
-    void openEra5Day(int day_idx)
-    {
-        if (day_idx < 0 || day_idx >= (int)era5_days.size()) {
-            fprintf(stderr, "\n  Fatal Error: Invalid ERA5 day index for NetCDF forcing: %d\n", day_idx);
+	    void buildGlobalTimeAxisGldas()
+	    {
+	        time_min.clear();
+	        time_map.clear();
+	        for (size_t fi = 0; fi < gldas_steps.size(); fi++) {
+	            const double t = (double)gldas_steps[fi].t_min;
+	            if (!time_min.empty() && t + 1e-9 < time_min.back()) {
+	                fprintf(stderr, "\n  Fatal Error: GLDAS time axis is not monotonic.\n");
+	                fprintf(stderr, "  Previous max t_min: %.6f\n", time_min.back());
+	                fprintf(stderr, "  Current  t_min: %.6f\n", t);
+	                fprintf(stderr, "  File: %s\n", gldas_steps[fi].file.c_str());
+	                myexit(ERRDATAIN);
+	            }
+	            time_min.push_back(t);
+	            TimeMapItem item;
+	            item.file_idx = (int)fi;
+	            item.local_time_idx = 0;
+	            time_map.push_back(item);
+	        }
+	        if (time_min.empty()) {
+	            fprintf(stderr, "\n  Fatal Error: GLDAS time axis is empty.\n");
+	            myexit(ERRFileIO);
+	        }
+	        fprintf(stdout, "\tNetCDF forcing time coverage: [%.3f, %.3f] min ([%.6f, %.6f] day)\n",
+	                time_min.front(), time_min.back(), time_min.front() / 1440.0, time_min.back() / 1440.0);
+	    }
+
+	    void openEra5Day(int day_idx)
+	    {
+	        if (day_idx < 0 || day_idx >= (int)era5_days.size()) {
+	            fprintf(stderr, "\n  Fatal Error: Invalid ERA5 day index for NetCDF forcing: %d\n", day_idx);
             myexit(ERRDATAIN);
         }
         if (open_day_idx == day_idx) {
@@ -1554,16 +2084,48 @@ struct NetcdfForcingProvider::Impl {
         r_u10 = openPointReader(f, nc_var["U10"], dim_time, dim_lat, dim_lon);
         r_v10 = openPointReader(f, nc_var["V10"], dim_time, dim_lat, dim_lon);
         r_ssr = openPointReader(f, nc_var["SSR"], dim_time, dim_lat, dim_lon);
-        if (!nc_var["SP"].empty()) {
-            r_sp = openPointReader(f, nc_var["SP"], dim_time, dim_lat, dim_lon);
-        }
-        open_day_idx = day_idx;
-    }
+	        if (!nc_var["SP"].empty()) {
+	            r_sp = openPointReader(f, nc_var["SP"], dim_time, dim_lat, dim_lon);
+	        }
+	        open_day_idx = day_idx;
+	    }
 
-    void loadCacheForTimeIndexEra5(int t_idx)
-    {
-        if (t_idx < 0 || t_idx >= (int)time_map.size()) {
-            fprintf(stderr, "\n  Fatal Error: Invalid time index for ERA5 forcing cache load: %d\n", t_idx);
+	    void openGldasStep(int step_idx)
+	    {
+	        if (step_idx < 0 || step_idx >= (int)gldas_steps.size()) {
+	            fprintf(stderr, "\n  Fatal Error: Invalid GLDAS file index for NetCDF forcing: %d\n", step_idx);
+	            myexit(ERRDATAIN);
+	        }
+	        if (open_gldas_idx == step_idx) {
+	            return;
+	        }
+	        closeGldasReaders();
+
+	        const std::string &f = gldas_steps[(size_t)step_idx].file;
+	        int ncid = -1;
+	        const int rc = nc_open(f.c_str(), NC_NOWRITE, &ncid);
+	        if (rc != NC_NOERR) {
+	            fprintf(stderr, "\n  Fatal Error: Failed to open GLDAS NetCDF file.\n");
+	            fprintf(stderr, "  File: %s\n", f.c_str());
+	            fprintf(stderr, "  Error: %s\n", ncStrError(rc).c_str());
+	            myexit(ERRFileIO);
+	        }
+	        gldas_ncid = ncid;
+
+	        g_prec = openPointMeta(ncid, f, nc_var["PREC"], dim_time, dim_lat, dim_lon);
+	        g_temp = openPointMeta(ncid, f, nc_var["TEMP"], dim_time, dim_lat, dim_lon);
+	        g_shum = openPointMeta(ncid, f, nc_var["SHUM"], dim_time, dim_lat, dim_lon);
+	        g_srad = openPointMeta(ncid, f, nc_var["SRAD"], dim_time, dim_lat, dim_lon);
+	        g_wind = openPointMeta(ncid, f, nc_var["WIND"], dim_time, dim_lat, dim_lon);
+	        g_pres = openPointMeta(ncid, f, nc_var["PRES"], dim_time, dim_lat, dim_lon);
+
+	        open_gldas_idx = step_idx;
+	    }
+
+	    void loadCacheForTimeIndexEra5(int t_idx)
+	    {
+	        if (t_idx < 0 || t_idx >= (int)time_map.size()) {
+	            fprintf(stderr, "\n  Fatal Error: Invalid time index for ERA5 forcing cache load: %d\n", t_idx);
             myexit(ERRDATAIN);
         }
         const TimeMapItem &tm0 = time_map[(size_t)t_idx];
@@ -1598,9 +2160,9 @@ struct NetcdfForcingProvider::Impl {
         const size_t t0_local = tm0.local_time_idx;
         const size_t t1_local = has_next ? tm1.local_time_idx : tm0.local_time_idx;
 
-        for (size_t i = 0; i < nst; i++) {
-            const size_t ilat = station_lat_idx[i];
-            const size_t ilon = station_lon_idx[i];
+	        for (size_t i = 0; i < nst; i++) {
+	            const size_t ilat = station_lat_idx[i];
+	            const size_t ilon = station_lon_idx[i];
 
             const double slon = stations[i].lon_deg;
             const double slat = stations[i].lat_deg;
@@ -1627,31 +2189,63 @@ struct NetcdfForcingProvider::Impl {
                 }
             }
 
-            // Accumulated -> interval increment
-            double tp_inc_m = 0.0;
-            double ssr_inc_jm2 = 0.0;
-            if (has_next) {
-                const double d_tp = tp1 - tp0;
-                tp_inc_m = (d_tp >= 0.0) ? d_tp : tp1;
-                const double d_ssr = ssr1 - ssr0;
-                ssr_inc_jm2 = (d_ssr >= 0.0) ? d_ssr : ssr1;
-            }
+	            // Accumulated -> interval increment
+	            double tp_inc_m = 0.0;
+	            double ssr_inc_jm2 = 0.0;
+	            if (has_next) {
+	                // Reset handling + tolerance:
+	                // - accumulated fields can reset across stitching boundaries
+	                // - float quantization can create small negative deltas even when the true
+	                //   accumulated series should be constant (e.g., nighttime radiation)
+	                const double d_tp = tp1 - tp0;
+	                const double tp_tol = std::max(1e-5, 1e-4 * std::max(std::fabs(tp0), std::fabs(tp1))); // meters
+	                if (d_tp >= -tp_tol) {
+	                    tp_inc_m = std::max(0.0, d_tp);
+	                } else {
+	                    tp_inc_m = tp1;
+	                }
 
-            double prcp_mm_day_val = 0.0;
-            double rn_wm2_val = 0.0;
-            if (has_next) {
-                prcp_mm_day_val = tp_inc_m * 1000.0 * (86400.0 / dt_sec);
-                rn_wm2_val = ssr_inc_jm2 / dt_sec;
-            }
-            if (!std::isfinite(prcp_mm_day_val) || prcp_mm_day_val < 0.0) {
-                prcp_mm_day_val = 0.0;
-            }
-            if (!std::isfinite(rn_wm2_val)) {
-                rn_wm2_val = 0.0;
-            }
+	                const double d_ssr = ssr1 - ssr0;
+	                const double ssr_tol = std::max(1000.0, 1e-4 * std::max(std::fabs(ssr0), std::fabs(ssr1))); // J/m^2
+	                if (d_ssr >= -ssr_tol) {
+	                    ssr_inc_jm2 = std::max(0.0, d_ssr);
+	                } else {
+	                    ssr_inc_jm2 = ssr1;
+	                }
+	            }
 
-            const double temp_c_val = t2m_k - 273.15;
-            const double td_c = d2m_k - 273.15;
+	            double prcp_mm_day_val = 0.0;
+	            double rn_wm2_val = 0.0;
+	            if (has_next) {
+	                prcp_mm_day_val = tp_inc_m * 1000.0 * (86400.0 / dt_sec);
+	                rn_wm2_val = ssr_inc_jm2 / dt_sec;
+	            }
+	            if (!std::isfinite(prcp_mm_day_val) || prcp_mm_day_val < 0.0) {
+	                prcp_mm_day_val = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (4 decimals) before thresholding.
+	            prcp_mm_day_val = std::nearbyint(prcp_mm_day_val * 10000.0) / 10000.0;
+	            const double min_mm_day = 0.0001; // match AutoSHUD behavior
+	            if (prcp_mm_day_val < min_mm_day) {
+	                prcp_mm_day_val = 0.0;
+	            }
+
+	            if (!std::isfinite(rn_wm2_val)) {
+	                rn_wm2_val = 0.0;
+	            }
+	            if (rn_wm2_val < 0.0) {
+	                rn_wm2_val = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (integer).
+	            rn_wm2_val = std::nearbyint(rn_wm2_val);
+
+	            double temp_c_val = t2m_k - 273.15;
+	            if (!std::isfinite(temp_c_val)) {
+	                temp_c_val = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (2 decimals).
+	            temp_c_val = std::nearbyint(temp_c_val * 100.0) / 100.0;
+	            const double td_c = d2m_k - 273.15;
 
             const double es = 6.112 * std::exp(17.67 * temp_c_val / (temp_c_val + 243.5));
             const double ea = 6.112 * std::exp(17.67 * td_c / (td_c + 243.5));
@@ -1659,58 +2253,183 @@ struct NetcdfForcingProvider::Impl {
             if (std::isfinite(es) && es > 0.0 && std::isfinite(ea)) {
                 rh_val = ea / es;
             }
-            if (!std::isfinite(rh_val)) {
-                rh_val = 0.0;
-            }
-            rh_val = std::min(1.0, std::max(0.0, rh_val));
+	            if (!std::isfinite(rh_val)) {
+	                rh_val = 0.0;
+	            }
+	            rh_val = std::min(1.0, std::max(0.0, rh_val));
+	            // Match AutoSHUD baseline forcing CSV quantization (4 decimals).
+	            rh_val = std::nearbyint(rh_val * 10000.0) / 10000.0;
+	            rh_val = std::min(1.0, std::max(0.0, rh_val));
 
-            const double wind_val = std::sqrt(u10 * u10 + v10 * v10);
+	            double wind_val = std::sqrt(u10 * u10 + v10 * v10);
+	            wind_val = std::fabs(wind_val);
+	            if (!std::isfinite(wind_val)) {
+	                wind_val = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (2 decimals) + min clamp.
+	            wind_val = std::nearbyint(wind_val * 100.0) / 100.0;
+	            const double min_wind_ms = 0.05;
+	            if (wind_val < min_wind_ms) {
+	                wind_val = min_wind_ms;
+	            }
 
-            prcp_mm_day[i] = prcp_mm_day_val;
-            temp_c[i] = temp_c_val;
-            rh_1[i] = rh_val;
-            wind_ms[i] = std::fabs(wind_val);
-            rn_wm2[i] = rn_wm2_val;
-        }
+	            prcp_mm_day[i] = prcp_mm_day_val;
+	            temp_c[i] = temp_c_val;
+	            rh_1[i] = rh_val;
+	            wind_ms[i] = wind_val;
+	            rn_wm2[i] = rn_wm2_val;
+	        }
 
         if (next_in_other_file) {
             tp_next.close();
             ssr_next.close();
         }
 
-        loaded_time_idx = t_idx;
-    }
+	        loaded_time_idx = t_idx;
+	    }
 
-    void loadCacheForTimeIndex(int t_idx)
-    {
-        if (product == "CMFD2") {
-            loadCacheForTimeIndexCmfd(t_idx);
-            return;
-        }
-        if (product == "ERA5") {
-            loadCacheForTimeIndexEra5(t_idx);
-            return;
-        }
-        fprintf(stderr, "\n  Fatal Error: Unsupported NetCDF forcing PRODUCT: %s\n", product.c_str());
-        myexit(ERRFileIO);
-    }
+	    void loadCacheForTimeIndexGldas(int t_idx)
+	    {
+	        if (t_idx < 0 || t_idx >= (int)time_map.size()) {
+	            fprintf(stderr, "\n  Fatal Error: Invalid time index for GLDAS forcing cache load: %d\n", t_idx);
+	            myexit(ERRDATAIN);
+	        }
+	        const TimeMapItem &tm = time_map[(size_t)t_idx];
+	        openGldasStep(tm.file_idx);
+	        if (gldas_ncid < 0) {
+	            fprintf(stderr, "\n  Fatal Error: GLDAS forcing file handle is not open.\n");
+	            myexit(ERRFileIO);
+	        }
+
+	        const size_t nst = stations.size();
+	        const size_t t_local = tm.local_time_idx;
+	        for (size_t i = 0; i < nst; i++) {
+	            const size_t ilat = station_lat_idx[i];
+	            const size_t ilon = station_lon_idx[i];
+
+	            const double slon = stations[i].lon_deg;
+	            const double slat = stations[i].lat_deg;
+	            const double glon = station_grid_lon[i];
+	            const double glat = station_grid_lat[i];
+
+	            const double prec_raw = readPointFromOpenFile(gldas_ncid, g_prec, t_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+	            const double temp_k = readPointFromOpenFile(gldas_ncid, g_temp, t_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+	            const double shum = readPointFromOpenFile(gldas_ncid, g_shum, t_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+	            const double srad = readPointFromOpenFile(gldas_ncid, g_srad, t_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+	            const double wind = readPointFromOpenFile(gldas_ncid, g_wind, t_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+	            const double pres = readPointFromOpenFile(gldas_ncid, g_pres, t_local, ilat, ilon, (int)i, slon, slat, glon, glat);
+
+	            // Rainf_f_tavg: kg/m^2/s -> mm/day
+	            double prec_mm_day = prec_raw * 86400.0;
+	            if (!std::isfinite(prec_mm_day)) {
+	                prec_mm_day = 0.0;
+	            }
+	            if (prec_mm_day < 0.0) {
+	                prec_mm_day = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (4 decimals) before thresholding.
+	            prec_mm_day = std::nearbyint(prec_mm_day * 10000.0) / 10000.0;
+	            const double min_mm_day = 0.0001; // match AutoSHUD behavior
+	            if (prec_mm_day < min_mm_day) {
+	                prec_mm_day = 0.0;
+	            }
+
+	            double temp_c_val = temp_k - 273.15;
+	            if (!std::isfinite(temp_c_val)) {
+	                temp_c_val = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (2 decimals).
+	            temp_c_val = std::nearbyint(temp_c_val * 100.0) / 100.0;
+
+	            double rh_percent = 0.263 * pres * shum /
+	                                std::exp(17.67 * (temp_k - 273.15) / (temp_k - 29.65));
+	            if (!std::isfinite(rh_percent)) {
+	                rh_percent = 0.0;
+	            }
+	            if (rh_percent > 100.0) {
+	                rh_percent = 100.0;
+	            }
+	            if (rh_percent < 0.0) {
+	                rh_percent = 0.0;
+	            }
+	            double rh_val = rh_percent / 100.0;
+	            // Match AutoSHUD baseline forcing CSV quantization (4 decimals).
+	            rh_val = std::nearbyint(rh_val * 10000.0) / 10000.0;
+	            if (rh_val > 1.0) {
+	                rh_val = 1.0;
+	            }
+	            if (rh_val < 0.0) {
+	                rh_val = 0.0;
+	            }
+
+	            double wind_val = std::fabs(wind);
+	            if (!std::isfinite(wind_val)) {
+	                wind_val = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (2 decimals) + min clamp.
+	            wind_val = std::nearbyint(wind_val * 100.0) / 100.0;
+	            const double min_wind_ms = 0.05;
+	            if (wind_val < min_wind_ms) {
+	                wind_val = min_wind_ms;
+	            }
+
+	            double rn_val = srad;
+	            if (!std::isfinite(rn_val)) {
+	                rn_val = 0.0;
+	            }
+	            if (rn_val < 0.0) {
+	                rn_val = 0.0;
+	            }
+	            // Match AutoSHUD baseline forcing CSV quantization (integer).
+	            rn_val = std::nearbyint(rn_val);
+
+	            prcp_mm_day[i] = prec_mm_day;
+	            temp_c[i] = temp_c_val;
+	            rh_1[i] = rh_val;
+	            wind_ms[i] = wind_val;
+	            rn_wm2[i] = rn_val;
+	        }
+	        loaded_time_idx = t_idx;
+	    }
+
+	    void loadCacheForTimeIndex(int t_idx)
+	    {
+	        if (product == "CMFD2") {
+	            loadCacheForTimeIndexCmfd(t_idx);
+	            return;
+	        }
+	        if (product == "ERA5") {
+	            loadCacheForTimeIndexEra5(t_idx);
+	            return;
+	        }
+	        if (product == "GLDAS") {
+	            loadCacheForTimeIndexGldas(t_idx);
+	            return;
+	        }
+	        fprintf(stderr, "\n  Fatal Error: Unsupported NetCDF forcing PRODUCT: %s\n", product.c_str());
+	        myexit(ERRFileIO);
+	    }
 
     void init()
     {
         parseCfg();
-        if (product == "CMFD2") {
-            initCmfdMonths();
-            discoverGridAndStationsCmfd();
-            buildGlobalTimeAxisCmfd();
-        } else if (product == "ERA5") {
-            initEra5Days();
-            discoverGridAndStationsEra5();
-            buildGlobalTimeAxisEra5();
-        } else {
-            fprintf(stderr, "\n  Fatal Error: NetCDF forcing PRODUCT is not supported: %s\n", product.c_str());
-            fprintf(stderr, "  Implemented: CMFD2, ERA5\n");
-            myexit(ERRFileIO);
-        }
+	        if (product == "CMFD2") {
+	            initCmfdMonths();
+	            discoverGridAndStationsCmfd();
+	            buildGlobalTimeAxisCmfd();
+	        } else if (product == "ERA5") {
+	            initEra5Days();
+	            discoverGridAndStationsEra5();
+	            buildGlobalTimeAxisEra5();
+	        } else if (product == "GLDAS") {
+	            initGldasTimesteps();
+	            discoverGridAndStationsGldas();
+	            buildGlobalTimeAxisGldas();
+	        } else {
+	            fprintf(stderr, "\n  Fatal Error: NetCDF forcing PRODUCT is not supported: %s\n", product.c_str());
+	            fprintf(stderr, "  Implemented: CMFD2, ERA5, GLDAS\n");
+	            myexit(ERRFileIO);
+	        }
 
         prcp_mm_day.assign(stations.size(), 0.0);
         temp_c.assign(stations.size(), 0.0);
@@ -1719,10 +2438,15 @@ struct NetcdfForcingProvider::Impl {
         rn_wm2.assign(stations.size(), 0.0);
 
         now_time_idx = 0;
-        loaded_time_idx = -1;
-        open_month_idx = -1;
-        open_day_idx = -1;
-    }
+	        loaded_time_idx = -1;
+	        open_month_idx = -1;
+	        open_day_idx = -1;
+	        open_gldas_idx = -1;
+	        if (gldas_ncid >= 0) {
+	            nc_close(gldas_ncid);
+	            gldas_ncid = -1;
+	        }
+	    }
 
     void movePointer(double t_min_in)
     {
