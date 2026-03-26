@@ -132,6 +132,7 @@ void FileOut::updateFilePath(){
     sprintf(riv_Q_surf, "%s/%s%s.rivqsurf", outpath, projectname, suffix);
     sprintf(riv_Q_sub, "%s/%s%s.rivqsub", outpath, projectname, suffix);
     sprintf(riv_y_stage, "%s/%s%s.rivystage", outpath, projectname, suffix);
+    sprintf(diag_riv, "%s/%s%s.diagriv", outpath, projectname, suffix);
     //cells
     sprintf(ele_y_snow, "%s/%s%s.eleysnow", outpath, projectname, suffix);
     sprintf(ele_y_ic, "%s/%s%s.eleyic", outpath, projectname, suffix);
@@ -311,6 +312,7 @@ void FileOut::copy(FileOut *p){
     strcpy(   riv_Q_surf, p->riv_Q_surf );
     strcpy(   riv_Q_sub, p->riv_Q_sub );
     strcpy(   riv_y_stage, p->riv_y_stage );
+    strcpy(   diag_riv, p->diag_riv );
     strcpy(   ele_y_snow, p->ele_y_snow );
     strcpy(   ele_y_ic, p-> ele_y_ic);
     strcpy(   ele_y_surf, p->ele_y_surf );

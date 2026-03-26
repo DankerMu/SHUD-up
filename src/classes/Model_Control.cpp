@@ -5,6 +5,7 @@
 //
 
 #include "Model_Control.hpp"
+#include "Model_Data.hpp"
 
 #include <cctype>
 #include <cmath>
@@ -80,6 +81,7 @@ void PrintOutDt::defaultmode(){
     dt_Qr_down = dt;
     dt_Qr_sub = dt;
     dt_Qr_surf = dt;
+    dt_diag_riv = dt;
     
     /* Lake  stage */
     dt_lake     = dt;
@@ -111,6 +113,7 @@ void PrintOutDt::calibmode(int dt ){
     dt_Qr_down = dt;
     dt_Qr_sub = dt;
     dt_Qr_surf = dt;
+    dt_diag_riv = dt;
     
     /* Lake  stage */
     dt_lake     = dt;
@@ -120,9 +123,20 @@ Control_Data::Control_Data(){
 Control_Data::~Control_Data(){
 //    delete Tout;
 }
-void Control_Data::ExportResults(double t){
+void Control_Data::ExportResults(double t, Model_Data *MD){
     for (int i = 0; i < NumPrint; i++){
         PCtrl[i].PrintData(dt, t);
+    }
+    if (MD == NULL || dt_diag_riv <= 0) {
+        return;
+    }
+
+    constexpr double OUTPUT_TRIGGER_EPSILON = 0.001;
+    const long long t_floor = static_cast<long long>(floor(t + OUTPUT_TRIGGER_EPSILON));
+    if ((t_floor % dt_diag_riv) == 0) {
+        const double t_quantized =
+            static_cast<double>(t_floor - static_cast<long long>(dt_diag_riv));
+        MD->PrintDiagRiv(t_quantized);
     }
 }
 
@@ -481,6 +495,8 @@ void Control_Data::read(const char *fn){
             dt_Qr_down =  val;
         else if (strcasecmp ("dt_Qr_up", optstr) == 0)
             dt_Qr_up =  val;
+        else if (strcasecmp("DT_DIAG_RIV", optstr) == 0)
+            dt_diag_riv = val;
         /* Lake print out control */
         // Y lake
         else if (strcasecmp ("dt_lake", optstr) == 0)

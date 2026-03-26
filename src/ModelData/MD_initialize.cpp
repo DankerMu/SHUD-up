@@ -328,6 +328,12 @@ void Model_Data:: initialize_output (){
         CS.PCtrl[ip++].Init(ForcStartTime, NumRiv, pf_out->riv_Q_surf, CS.dt_Qr_surf, QrivSurf, 1, io_riv);
     if (CS.dt_yr_stage > 0)
         CS.PCtrl[ip++].Init(ForcStartTime, NumRiv, pf_out->riv_y_stage, CS.dt_yr_stage, yRivStg, 0, io_riv);
+    if (CS.dt_diag_riv > 0) {
+        fpDiagRiv = fopen(pf_out->diag_riv, "w");
+        if (fpDiagRiv) {
+            fprintf(fpDiagRiv, "# time\tiRiv\tBedSlope\tQrivUp\tQrivDown\tQrivSurf\tQrivSub\tDYriv\tuYriv\n");
+        }
+    }
     
     /* Print control for Lake */
     if (CS.dt_lake > 0 && NumLake > 0){

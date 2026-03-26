@@ -83,6 +83,7 @@ public:
     char riv_Q_surf[MAXLEN];
     char riv_Q_sub[MAXLEN];
     char riv_y_stage[MAXLEN];
+    char diag_riv[MAXLEN];
     //cells
     char ele_y_snow[MAXLEN];
     char ele_y_ic[MAXLEN];

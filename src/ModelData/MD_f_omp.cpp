@@ -58,6 +58,7 @@ void Model_Data::f_applyDY_omp(double *DY, double t){
             }else{
                 DY[iRIV] = (- QrivUp[i] - QrivSurf[i] - QrivSub[i] - QrivDown[i] + Riv[i].qBC) / Riv[i].u_TopArea;
             }
+            diagRivDY[i] = DY[iRIV];
             //        DY[iRIV] = 0.0;
 #ifdef DEBUG
             CheckNANi(DY[i + 3 * NumEle], i, "DY[i] of river (Model_Data::f_applyDY)");
@@ -168,4 +169,3 @@ void Model_Data::f_update_omp(double  *Y, double *DY, double t){
         }
     } // end omp parallel.
 }
-

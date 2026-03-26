@@ -173,6 +173,7 @@ void Model_Data::f_applyDY(double *DY, double t){
 //                i=i;
 //            }
         }
+        diagRivDY[i] = DY[iRIV];
 #ifdef DEBUG
         CheckNANi(DY[i + 3 * NumEle], i, "DY[i] of river (Model_Data::f_applyDY)");
 #endif

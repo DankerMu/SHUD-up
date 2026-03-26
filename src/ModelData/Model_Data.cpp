@@ -160,6 +160,7 @@ void Model_Data::malloc_EleRiv(){
     if(NumRiv > 0){
         uYriv = new double[NumRiv];  // 35.1
     }
+    diagRivDY = new double[NumRiv]();
     
     for (int i = 0; i < NumEle; i++) {
         QeleSurf[i] = new double[3];

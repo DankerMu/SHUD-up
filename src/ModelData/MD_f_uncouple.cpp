@@ -196,6 +196,7 @@ void Model_Data::f_applyDYi(double *DY, double t, int flag){
             }else{
                 DY[i] = (- QrivUp[i] - QrivSurf[i] - QrivSub[i] - QrivDown[i] + Riv[i].qBC) / Riv[i].u_TopArea;
             }
+            diagRivDY[i] = DY[i];
 #ifdef DEBUG
 CheckNANi(uYriv[i], i, "DY[i] of river (Model_Data::f_applyDYi)");
 CheckNANi(DY[i], i, "DY[i] of river (Model_Data::f_applyDYi)");
@@ -214,5 +215,4 @@ CheckNANi(DY[i], i, "DY[i] of river (Model_Data::f_applyDYi)");
         myexit(ERRCONSIS);
     }
 } // END OF function Model_Data::f_applyDYi.
-
 

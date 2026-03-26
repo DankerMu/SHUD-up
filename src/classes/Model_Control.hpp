@@ -44,6 +44,8 @@ static inline const char* SolarLonLatModeName(SolarLonLatMode mode)
     }
 }
 
+class Model_Data;
+
 class IPrintSink {
 public:
     virtual ~IPrintSink() = default;
@@ -144,6 +146,7 @@ public:
     int dt_Qr_down = 0;
     int dt_Qr_sub = 0;
     int dt_Qr_surf = 0;
+    int dt_diag_riv = 0;
     
     /* Lake  stage */
     int dt_lake     = 1440;
@@ -220,7 +223,7 @@ public:
     /* Methods */
     Control_Data();
     ~Control_Data();
-    void ExportResults(double t);
+    void ExportResults(double t, Model_Data *MD);
     void updateSimPeriod(double day0, double day1);
     void read(const char *fn);
     void write(const char *fn);

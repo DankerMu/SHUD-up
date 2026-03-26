@@ -993,6 +993,10 @@ void Model_Data::read_bcLake2(const char *fn){
     tsd_lqBC.read_csv();
 }
 void Model_Data::FreeData(){
+    if (fpDiagRiv != nullptr) {
+        fclose(fpDiagRiv);
+        fpDiagRiv = nullptr;
+    }
     
     for (int i = 0; i < NumEle; i++) {
         delete[] QeleSurf[i] ;
@@ -1058,6 +1062,7 @@ void Model_Data::FreeData(){
     
     delete[]    QrivDown;
     delete[]    QrivUp;  // 28
+    delete[]    diagRivDY;
     delete[]    QsegSurf;
     delete[]    QsegSub;
     

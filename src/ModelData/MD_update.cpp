@@ -297,3 +297,14 @@ int Model_Data::PrintInit (const char *fn, double t){
     fclose (fp);
     return 1;
 }
+
+void Model_Data::PrintDiagRiv(double t){
+    if (!fpDiagRiv) return;
+    for (int i = 0; i < NumRiv; i++) {
+        fprintf(fpDiagRiv, "%.1f\t%d\t%.10e\t%.10e\t%.10e\t%.10e\t%.10e\t%.10e\t%.10e\n",
+                t, i + 1, Riv[i].BedSlope,
+                QrivUp[i], QrivDown[i], QrivSurf[i], QrivSub[i],
+                diagRivDY[i], uYriv[i]);
+    }
+    fflush(fpDiagRiv);
+}

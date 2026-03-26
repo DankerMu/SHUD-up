@@ -150,7 +150,7 @@ double SHUD(FileIn *fin, FileOut *fout){
         if (MD->wbdiag != nullptr) {
             MD->wbdiag->maybeWrite(t);
         }
-        MD->CS.ExportResults(t);
+        MD->CS.ExportResults(t, MD);
         MD->flood->FloodWarning(t);
     }
     MD->ScreenPrint(t, MD->CS.NumSteps);
@@ -313,7 +313,7 @@ double SHUD_uncouple(FileIn *fin, FileOut *fout){
             }
         }
         MD->summary(u1, u2, u3, u4, u5);
-        MD->CS.ExportResults(t);
+        MD->CS.ExportResults(t, MD);
         flag = MD->ScreenPrintu(t, i);
         MD->PrintInit(fout->Init_update, t);
 //        printVector(fp1, globalY, 0, N1, t);

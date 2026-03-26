@@ -143,6 +143,7 @@ public:
     double *QrivSub;        /* gw Flux between river and element */
     double *QrivDown;
     double *QrivUp;
+    double *diagRivDY = nullptr;
     double *QsegSurf;
     double *QsegSub;    
     
@@ -212,6 +213,7 @@ public:
 
     /* Optional water-balance diagnostics (enabled via env var SHUD_WB_DIAG=1) */
     WaterBalanceDiag *wbdiag = nullptr;
+    FILE *fpDiagRiv = nullptr;
     
 private:
     double *t_prcp;
@@ -258,6 +260,7 @@ public:
     void summary(N_Vector u);
     int ScreenPrint(double t, unsigned long it);
     int ScreenPrintu(double t, unsigned long it);
+    void PrintDiagRiv(double t);
     /* methods in f function */
     void f_loop(double t);
     void f_loopET(double t);
